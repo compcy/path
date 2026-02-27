@@ -81,6 +81,12 @@ fn save_entries(entries: &[PathEntry]) -> io::Result<()> {
     fs::write(STORE_FILE, data)
 }
 
+/// Entry point for the `path` utility.
+///
+/// Parses command-line arguments, handles the `add` subcommand (recording
+/// entries and emitting the modified PATH string), or otherwise prints the
+/// current `PATH` environment variable.  The function is intentionally kept
+/// small; helper routines above manage persistence to the `.path` store.
 fn main() {
     let matches = App::new("path")
         .version("0.1.0")
