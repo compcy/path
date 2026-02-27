@@ -129,13 +129,19 @@ fn validate_entries() -> io::Result<()> {
     // configuration error.  Clippy warns about a loop that always exits, so
     // we use `find` instead of iterating explicitly.
     if let Some(e) = entries.iter().find(|e| e.name.is_empty()) {
-        eprintln!("error: found nameless entry in {} at line {}: '{}'", STORE_FILE, e.line_number, e.location);
+        eprintln!(
+            "error: found nameless entry in {} at line {}: '{}'",
+            STORE_FILE, e.line_number, e.location
+        );
         std::process::exit(1);
     }
 
     // Check for invalid names (must be alphanumeric)
     if let Some(e) = entries.iter().find(|e| !is_valid_name(&e.name)) {
-        eprintln!("error: invalid name '{}' at line {}: names must contain only alphanumeric characters", e.name, e.line_number);
+        eprintln!(
+            "error: invalid name '{}' at line {}: names must contain only alphanumeric characters",
+            e.name, e.line_number
+        );
         std::process::exit(1);
     }
 
@@ -143,20 +149,26 @@ fn validate_entries() -> io::Result<()> {
     // numbers so the user can resolve the conflict.
     let mut seen_names = std::collections::HashMap::new();
     for e in entries.iter() {
-        seen_names.entry(&e.name)
+        seen_names
+            .entry(&e.name)
             .or_insert_with(Vec::new)
             .push(e.line_number);
     }
-    let duplicates: Vec<_> = seen_names.iter()
+    let duplicates: Vec<_> = seen_names
+        .iter()
         .filter(|(_, lines)| lines.len() > 1)
         .collect();
     if !duplicates.is_empty() {
         for (name, lines) in duplicates {
-            let line_list = lines.iter()
+            let line_list = lines
+                .iter()
                 .map(|n| n.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
-            eprintln!("error: duplicate name '{}' found at lines: {}", name, line_list);
+            eprintln!(
+                "error: duplicate name '{}' found at lines: {}",
+                name, line_list
+            );
         }
         std::process::exit(1);
     }
@@ -238,7 +250,10 @@ fn main() {
         if let Some(name_str) = name_opt {
             // validate name format (alphanumeric only)
             if !is_valid_name(&name_str) {
-                eprintln!("error: invalid name '{}': names must contain only alphanumeric characters", name_str);
+                eprintln!(
+                    "error: invalid name '{}': names must contain only alphanumeric characters",
+                    name_str
+                );
                 std::process::exit(1);
             }
             if let Ok(mut entries) = load_entries() {
@@ -253,7 +268,10 @@ fn main() {
                 let stored_loc = match fs::canonicalize(loc) {
                     Ok(p) => p.to_string_lossy().into_owned(),
                     Err(_) => {
-                        eprintln!("warning: could not canonicalize path '{}', storing as-is", loc);
+                        eprintln!(
+                            "warning: could not canonicalize path '{}', storing as-is",
+                            loc
+                        );
                         loc.to_string()
                     }
                 };
