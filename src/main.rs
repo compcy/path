@@ -63,11 +63,9 @@ fn load_entries() -> io::Result<Vec<PathEntry>> {
     let file = fs::File::open(path)?;
     let reader = io::BufReader::new(file);
     let mut entries = Vec::new();
-    for line in reader.lines() {
-        if let Ok(l) = line {
-            if let Some(e) = parse_entry_line(&l) {
-                entries.push(e);
-            }
+    for l in reader.lines().map_while(Result::ok) {
+        if let Some(e) = parse_entry_line(&l) {
+            entries.push(e);
         }
     }
     Ok(entries)
@@ -82,7 +80,6 @@ fn save_entries(entries: &[PathEntry]) -> io::Result<()> {
     }
     fs::write(STORE_FILE, data)
 }
-
 
 fn main() {
     let matches = App::new("path")
@@ -134,7 +131,11 @@ fn main() {
 
         // persist to store file
         if let Ok(mut entries) = load_entries() {
-            entries.push(PathEntry { location: loc.to_string(), name: name.clone(), exclusivity });
+            entries.push(PathEntry {
+                location: loc.to_string(),
+                name: name.clone(),
+                exclusivity,
+            });
             if let Err(e) = save_entries(&entries) {
                 eprintln!("warning: failed to update store file: {}", e);
             }

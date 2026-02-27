@@ -1,8 +1,8 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::env;
-use tempfile::tempdir;
 use std::fs;
+use tempfile::tempdir;
 
 #[test]
 fn prints_path_env() {

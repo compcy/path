@@ -1,0 +1,16 @@
+#!/bin/sh
+# Repository-local hook that runs formatting and linting
+# To activate, run:
+#   git config core.hooksPath .githooks
+
+echo "Running cargo fmt..."
+cargo fmt -- || {
+    echo "cargo fmt failed; please run 'cargo fmt' and stage changes." >&2
+    exit 1
+}
+
+echo "Running cargo clippy..."
+cargo clippy -- -D warnings || {
+    echo "clippy found issues; fix them before committing." >&2
+    exit 1
+}
