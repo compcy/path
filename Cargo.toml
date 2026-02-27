@@ -1,0 +1,11 @@
+[package]
+name = "path"
+version = "0.1.0"
+authors = ["compcy <your_email@example.com>"]
+edition = "2021"
+
+[dependencies]
+clap = "^2.33"  # Command line argument parser
+
+[profile.release]
+opt-level = 3
