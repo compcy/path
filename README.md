@@ -21,6 +21,11 @@ cargo run -- [OPTIONS] [SUBCOMMAND]
 - `path add --exclusive …` — mark entry exclusive (extra field stored)
 - `path list` — show all saved entries from the `.path` file
 
+**Note:** when the tool reads the `.path` file at startup it will abort with
+an error if it encounters any entry lacking a name. Previously such entries
+were silently removed, but the program now enforces the rule to avoid
+accidental loss of data.
+
 Example:
 
 ```sh
@@ -31,7 +36,8 @@ path add --pre /opt/custom/bin      # prepend to PATH instead of append
 
 Entries are persisted to a `.path` file in the current directory, but
 only for entries where you supplied an explicit name. Each line consists of
-`location<TAB>name<TAB>exclusivity?`. The tool reads and writes this file
+`location<TAB>name<TAB>exclusivity?`. (Because a name is mandatory the tool
+will refuse to start if it finds a line missing that field.) The tool reads and writes this file
 automatically when adding.
 
 You can also install a release build and invoke it directly:
