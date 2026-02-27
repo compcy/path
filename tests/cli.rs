@@ -59,3 +59,35 @@ fn add_with_name_and_prepend() {
     let contents = fs::read_to_string(store).unwrap();
     assert!(contents.contains("/tmp/y\tyname"));
 }
+
+/// After adding entries, `list` should print them in a readable form.
+#[test]
+fn list_shows_entries() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    // add two entries with and without a name
+    let mut cmd = Command::cargo_bin("path").unwrap();
+    cmd.current_dir(&dir).env("PATH", "");
+    cmd.arg("add").arg("/foo").arg("foo");
+    cmd.assert().success();
+
+    let mut cmd2 = Command::cargo_bin("path").unwrap();
+    cmd2.current_dir(&dir).env("PATH", "");
+    cmd2.arg("add").arg("/bar");
+    cmd2.assert().success();
+
+    // run list and inspect output
+    let mut list_cmd = Command::cargo_bin("path").unwrap();
+    list_cmd.current_dir(&dir).env("PATH", "");
+    let output = list_cmd
+        .arg("list")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert!(out_str.contains("/foo (foo)"));
+    assert!(out_str.contains("/bar"));
+}

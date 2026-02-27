@@ -18,6 +18,7 @@ cargo run -- [OPTIONS] [SUBCOMMAND]
   optional and, if omitted, defaults to the location string
 - `path add --pre <location> [name]` — prepend instead of append
 - `path add --exclusive …` — mark entry exclusive (extra field stored)
+- `path list` — show all saved entries from the `.path` file
 
 Example:
 

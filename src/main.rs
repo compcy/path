@@ -119,6 +119,7 @@ fn main() {
                         .takes_value(false),
                 ),
         )
+        .subcommand(SubCommand::with_name("list").about("List entries stored in the .path file"))
         .get_matches();
 
     if let Some(add_matches) = matches.subcommand_matches("add") {
@@ -160,6 +161,20 @@ fn main() {
             }
         };
         println!("{}", new_path);
+        return;
+    }
+
+    if matches.subcommand_matches("list").is_some() {
+        // display each stored entry; show name if it's different from location
+        if let Ok(entries) = load_entries() {
+            for e in entries {
+                if e.name != e.location {
+                    println!("{} ({})", e.location, e.name);
+                } else {
+                    println!("{}", e.location);
+                }
+            }
+        }
         return;
     }
 
