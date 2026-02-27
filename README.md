@@ -15,7 +15,8 @@ cargo run -- [OPTIONS] [SUBCOMMAND]
 
 - `path` — display current PATH
 - `path add <location> [name]` — append a new entry to the PATH; name is
-  optional and, if omitted, defaults to the location string
+  optional and, if omitted, defaults to the location string. **Only entries
+  where a name is provided are written to the `.path` file.**
 - `path add --pre <location> [name]` — prepend instead of append
 - `path add --exclusive …` — mark entry exclusive (extra field stored)
 - `path list` — show all saved entries from the `.path` file
@@ -28,9 +29,10 @@ path add /home/$USER/.bin home      # store with short name "home"
 path add --pre /opt/custom/bin      # prepend to PATH instead of append
 ```
 
-Entries are persisted to a `.path` file in the current directory. Each line
-consists of `location<TAB>name<TAB>exclusivity?`.  The tool reads and writes
-this file automatically when adding.
+Entries are persisted to a `.path` file in the current directory, but
+only for entries where you supplied an explicit name. Each line consists of
+`location<TAB>name<TAB>exclusivity?`. The tool reads and writes this file
+automatically when adding.
 
 You can also install a release build and invoke it directly:
 

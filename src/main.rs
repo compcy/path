@@ -124,27 +124,28 @@ fn main() {
 
     if let Some(add_matches) = matches.subcommand_matches("add") {
         let loc = add_matches.value_of("location").unwrap();
-        // name may be supplied as second positional argument; default to the
-        // location string if none provided
-        let name = add_matches
-            .value_of("name")
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| loc.to_string());
+        // name may be supplied as second positional argument; keep track of the
+        // optional value separately so we know whether it was provided by the
+        // user. If absent we won't write anything to the store.
+        let name_opt = add_matches.value_of("name").map(|s| s.to_string());
+
         let exclusivity = if add_matches.is_present("exclusive") {
             Some(true)
         } else {
             None
         };
 
-        // persist to store file
-        if let Ok(mut entries) = load_entries() {
-            entries.push(PathEntry {
-                location: loc.to_string(),
-                name: name.clone(),
-                exclusivity,
-            });
-            if let Err(e) = save_entries(&entries) {
-                eprintln!("warning: failed to update store file: {}", e);
+        // persist only if a name was explicitly given
+        if let Some(name_str) = name_opt {
+            if let Ok(mut entries) = load_entries() {
+                entries.push(PathEntry {
+                    location: loc.to_string(),
+                    name: name_str,
+                    exclusivity,
+                });
+                if let Err(e) = save_entries(&entries) {
+                    eprintln!("warning: failed to update store file: {}", e);
+                }
             }
         }
 

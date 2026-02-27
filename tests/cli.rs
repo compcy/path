@@ -20,9 +20,9 @@ fn prints_path_env() {
 }
 
 /// Verify that `path add <location>` modifies the path string by
-/// appending and also writes a corresponding entry into the `.path` store.
+/// appending, and that when no name is provided nothing is recorded.
 #[test]
-fn add_appends_and_records_entry() {
+fn add_appends_but_only_records_with_name() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
@@ -34,14 +34,14 @@ fn add_appends_and_records_entry() {
         .success()
         .stdout(predicate::str::contains("A:/tmp/x"));
 
-    // verify store file
+    // verify store file does not contain an entry
     let store = dir.join(".path");
-    let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp/x\t/tmp/x"));
+    let contents = fs::read_to_string(store).unwrap_or_default();
+    assert!(!contents.contains("/tmp/x"));
 }
 
 /// Ensure that providing a name and the `--pre` flag prepends the
-/// location and stores the supplied name instead of the default.
+/// location and stores the supplied name (only named entries are stored).
 #[test]
 fn add_with_name_and_prepend() {
     let temp = tempdir().unwrap();
@@ -66,7 +66,7 @@ fn list_shows_entries() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    // add two entries with and without a name
+    // add two entries; only the named one should be stored
     let mut cmd = Command::cargo_bin("path").unwrap();
     cmd.current_dir(&dir).env("PATH", "");
     cmd.arg("add").arg("/foo").arg("foo");
@@ -77,7 +77,7 @@ fn list_shows_entries() {
     cmd2.arg("add").arg("/bar");
     cmd2.assert().success();
 
-    // run list and inspect output
+    // run list and inspect output; /bar should not appear because it had no name
     let mut list_cmd = Command::cargo_bin("path").unwrap();
     list_cmd.current_dir(&dir).env("PATH", "");
     let output = list_cmd
@@ -89,5 +89,5 @@ fn list_shows_entries() {
         .clone();
     let out_str = String::from_utf8_lossy(&output);
     assert!(out_str.contains("/foo (foo)"));
-    assert!(out_str.contains("/bar"));
+    assert!(!out_str.contains("/bar"));
 }
