@@ -21,9 +21,13 @@ cargo run -- [OPTIONS] [SUBCOMMAND]
   - If `name` is provided, it must be alphanumeric and unique.
   - Only entries with an explicit `name` are written to `.path`.
 - `path add --pre <location-or-name> [name]` — prepend instead of append
-- `path remove <location-or-name>` — remove from PATH
-  - If the argument matches a stored short name, the stored entry is removed and its location is removed from PATH.
-  - Otherwise the argument is treated as a path (same absolute/dot-relative validation), and matching stored locations are removed.
+- `path remove <location-or-name>` — remove from PATH only
+  - If the argument matches a stored short name, its location is removed from PATH.
+  - Otherwise the argument is treated as a path (same absolute/dot-relative validation).
+  - This command does not modify `.path`.
+- `path delete <location-or-name>` — delete from `.path` only
+  - If the argument matches a stored short name, that entry is deleted.
+  - Otherwise the argument is treated as a path (same absolute/dot-relative validation), and matching stored locations are deleted.
 - `path list` — show all saved entries from the `.path` file
 
 **Startup validation note:** when reading `.path`, the tool aborts if it finds:
@@ -41,7 +45,8 @@ path add /home/$USER/.bin home      # store with short name "home"
 path add --pre /opt/custom/bin      # prepend to PATH instead of append
 path add home                        # uses stored name "home" if present
 path remove /home/$USER/.bin         # remove by path
-path remove home                     # remove by stored short name
+path remove home                     # remove from PATH by stored short name
+path delete home                     # delete stored entry from .path by name
 
 # invalid unless "foo" is a stored name
 path add foo

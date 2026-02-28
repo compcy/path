@@ -228,10 +228,20 @@ fn main() {
         )
         .subcommand(
             SubCommand::with_name("remove")
-                .about("Remove a directory from PATH and optionally from the .path store")
+                .about("Remove a directory from PATH")
                 .arg(
                     Arg::with_name("location")
                         .help("Location or stored name to remove from PATH")
+                        .required(true)
+                        .index(1),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("delete")
+                .about("Delete a stored entry from the .path file")
+                .arg(
+                    Arg::with_name("location")
+                        .help("Location or stored name to delete from .path")
                         .required(true)
                         .index(1),
                 ),
@@ -342,32 +352,26 @@ fn main() {
 
     if let Some(remove_matches) = matches.subcommand_matches("remove") {
         let arg = remove_matches.value_of("location").unwrap().to_string();
-        // determine whether this is a stored name
+        // determine whether this is a stored name; if so resolve to its location
         let mut loc_to_remove = arg.clone();
-        if let Ok(mut entries) = load_entries() {
-            if let Some(pos) = entries.iter().position(|e| e.name == arg) {
-                // remove the stored entry with this name and use its location
-                let entry = entries.remove(pos);
+        let mut resolved_by_name = false;
+        if let Ok(entries) = load_entries() {
+            if let Some(entry) = entries.iter().find(|e| e.name == arg) {
                 loc_to_remove = entry.location.clone();
-                if let Err(e) = save_entries(&entries) {
-                    eprintln!("warning: failed to update store file: {}", e);
-                }
-            } else {
-                // treat as a path; enforce format and canonicalize if possible
-                if !(arg.starts_with('/') || arg.starts_with('.')) {
-                    eprintln!("error: path '{}' must be absolute or start with '.'", arg);
-                    std::process::exit(1);
-                }
-                loc_to_remove = match fs::canonicalize(&arg) {
-                    Ok(p) => p.to_string_lossy().into_owned(),
-                    Err(_) => arg.clone(),
-                };
-                // remove any stored entries that match this location
-                entries.retain(|e| e.location != loc_to_remove);
-                if let Err(e) = save_entries(&entries) {
-                    eprintln!("warning: failed to update store file: {}", e);
-                }
+                resolved_by_name = true;
             }
+        }
+
+        // if not resolved by name, treat as a path
+        if !resolved_by_name {
+            if !(arg.starts_with('/') || arg.starts_with('.')) {
+                eprintln!("error: path '{}' must be absolute or start with '.'", arg);
+                std::process::exit(1);
+            }
+            loc_to_remove = match fs::canonicalize(&arg) {
+                Ok(p) => p.to_string_lossy().into_owned(),
+                Err(_) => arg.clone(),
+            };
         }
 
         // compute new PATH with the location removed
@@ -376,6 +380,30 @@ fn main() {
         let filtered: Vec<&str> = parts.into_iter().filter(|p| *p != loc_to_remove).collect();
         let new_path = filtered.join(":");
         println!("{}", new_path);
+        return;
+    }
+
+    if let Some(delete_matches) = matches.subcommand_matches("delete") {
+        let arg = delete_matches.value_of("location").unwrap().to_string();
+        if let Ok(mut entries) = load_entries() {
+            if let Some(pos) = entries.iter().position(|e| e.name == arg) {
+                entries.remove(pos);
+            } else {
+                if !(arg.starts_with('/') || arg.starts_with('.')) {
+                    eprintln!("error: path '{}' must be absolute or start with '.'", arg);
+                    std::process::exit(1);
+                }
+                let loc_to_delete = match fs::canonicalize(&arg) {
+                    Ok(p) => p.to_string_lossy().into_owned(),
+                    Err(_) => arg.clone(),
+                };
+                entries.retain(|e| e.location != loc_to_delete);
+            }
+
+            if let Err(e) = save_entries(&entries) {
+                eprintln!("warning: failed to update store file: {}", e);
+            }
+        }
         return;
     }
 

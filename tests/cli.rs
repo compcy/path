@@ -331,3 +331,48 @@ fn reject_file_locations() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("exists but is not a directory"));
 }
+
+/// `remove` should only affect the PATH output and not delete entries from `.path`.
+#[test]
+fn remove_keeps_store_entries() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "/tmp\thome\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "/tmp:/usr/bin");
+    let output = cmd
+        .arg("remove")
+        .arg("home")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert!(!out_str.contains("/tmp"));
+    assert!(out_str.contains("/usr/bin"));
+
+    // store entry should remain
+    let contents = fs::read_to_string(store).unwrap();
+    assert!(contents.contains("/tmp\thome"));
+}
+
+/// `delete` should remove the matching entry from `.path` by name.
+#[test]
+fn delete_removes_store_entry_by_name() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "/tmp\thome\n/usr/bin\tsys\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    cmd.arg("delete").arg("home");
+    cmd.assert().success();
+
+    let contents = fs::read_to_string(store).unwrap();
+    assert!(!contents.contains("/tmp\thome"));
+    assert!(contents.contains("/usr/bin\tsys"));
+}
