@@ -4,10 +4,13 @@
 #   git config core.hooksPath .githooks
 
 echo "Running cargo fmt..."
+# auto-format and re-add any modified files so the commit will include them
 cargo fmt -- || {
-    echo "cargo fmt failed; please run 'cargo fmt' and stage changes." >&2
+    echo "cargo fmt failed; please ensure rustfmt is installed" >&2
     exit 1
 }
+# stage any formatting changes made by rustfmt
+git add -u
 
 echo "Running cargo clippy..."
 cargo clippy -- -D warnings || {
