@@ -4,10 +4,19 @@
 #   git config core.hooksPath .githooks
 
 echo "Running cargo fmt..."
+# auto-format and re-add any modified files so the commit will include them
 cargo fmt -- || {
-    echo "cargo fmt failed; please run 'cargo fmt' and stage changes." >&2
+    echo "cargo fmt failed; please ensure rustfmt is installed" >&2
     exit 1
 }
+# ensure there are no unstaged changes (e.g., from cargo fmt) before committing
+UNSTAGED_FMT_CHANGES="$(git diff --name-only)"
+if [ -n "$UNSTAGED_FMT_CHANGES" ]; then
+    echo "cargo fmt modified the following files. Please review and stage the changes before committing:" >&2
+    echo "$UNSTAGED_FMT_CHANGES" >&2
+    echo "Aborting commit." >&2
+    exit 1
+fi
 
 echo "Running cargo clippy..."
 cargo clippy -- -D warnings || {
