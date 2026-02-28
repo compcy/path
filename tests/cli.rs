@@ -237,3 +237,25 @@ fn invalid_names_in_file_cause_error() {
     assert!(contents.contains("valid123"));
     assert!(contents.contains("invalid-name"));
 }
+
+/// Adding by name should look up the stored path and add it to PATH.
+#[test]
+fn add_by_stored_name() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    // first add with name "mytools"
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    cmd.arg("add").arg("/usr/local/bin").arg("mytools");
+    cmd.assert().success();
+
+    // now add by name "mytools" (should look it up and add /usr/local/bin)
+    let mut cmd2 = cargo::cargo_bin_cmd!("path");
+    cmd2.current_dir(&dir).env("PATH", "");
+    cmd2.arg("add").arg("mytools");
+    let output = cmd2.assert().success().get_output().stdout.clone();
+    let out_str = String::from_utf8_lossy(&output);
+    // should print path containing /usr/local/bin
+    assert!(out_str.contains("/usr/local/bin"));
+}

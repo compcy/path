@@ -230,9 +230,18 @@ fn main() {
         .get_matches();
 
     if let Some(add_matches) = matches.subcommand_matches("add") {
-        let loc = add_matches.value_of("location").unwrap();
+        let mut loc = add_matches.value_of("location").unwrap().to_string();
+        
+        // Check if the location argument is actually a stored name in the .path file
+        // If so, use the associated path instead
+        if let Ok(entries) = load_entries() {
+            if let Some(entry) = entries.iter().find(|e| e.name == loc) {
+                loc = entry.location.clone();
+            }
+        }
+        
         // warn immediately if the specified location doesn't currently exist
-        if !Path::new(loc).exists() {
+        if !Path::new(&loc).exists() {
             eprintln!("warning: added path '{}' does not exist", loc);
         }
         // name may be supplied as second positional argument; keep track of the
@@ -265,7 +274,7 @@ fn main() {
                 // attempt to turn the location into an absolute path so that
                 // later validation works regardless of current working
                 // directory.
-                let stored_loc = match fs::canonicalize(loc) {
+                let stored_loc = match fs::canonicalize(&loc) {
                     Ok(p) => p.to_string_lossy().into_owned(),
                     Err(_) => {
                         eprintln!(
@@ -294,7 +303,7 @@ fn main() {
         } else {
             // default to append
             if current.is_empty() {
-                loc.to_string()
+                loc
             } else {
                 format!("{}:{}", current, loc)
             }
