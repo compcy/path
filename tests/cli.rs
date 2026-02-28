@@ -259,3 +259,75 @@ fn add_by_stored_name() {
     // should print path containing /usr/local/bin
     assert!(out_str.contains("/usr/local/bin"));
 }
+
+/// When a directory with the same name exists in the working directory,
+/// supplying that name to `add` should still resolve via the stored entry
+/// rather than treating the string as a filesystem path.
+#[test]
+fn name_precedence_over_actual_path() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    // create a real directory called "x"
+    fs::create_dir(dir.join("x")).unwrap();
+
+    // store an entry named "x" that points somewhere else
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    cmd.arg("add").arg("/real/location").arg("x");
+    cmd.assert().success();
+
+    // now run `add x` -- it should use the stored path, not ./x
+    let mut cmd2 = cargo::cargo_bin_cmd!("path");
+    cmd2.current_dir(&dir).env("PATH", "");
+    let output = cmd2
+        .arg("add")
+        .arg("x")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    let actual_path = dir.join("x");
+    let actual = actual_path.to_string_lossy();
+    assert!(out_str.contains("/real/location"));
+    assert!(!out_str.contains(actual.as_ref()));
+}
+
+/// Paths passed to `add` must either be absolute or start with a dot.
+#[test]
+fn enforce_path_format_for_add() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    cmd.arg("add").arg("notvalid");
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("must be absolute or start with '.'"));
+
+    // starting with '.' is fine
+    let mut cmd2 = cargo::cargo_bin_cmd!("path");
+    cmd2.current_dir(&dir).env("PATH", "");
+    cmd2.arg("add").arg("./rel");
+    cmd2.assert().success();
+}
+
+/// Adding a path that refers to a regular file (not a directory) should fail.
+#[test]
+fn reject_file_locations() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    // create an actual file
+    let file = dir.join("f.txt");
+    fs::write(&file, "hello").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    cmd.arg("add").arg("./f.txt");
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("exists but is not a directory"));
+}

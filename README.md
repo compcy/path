@@ -14,17 +14,24 @@ cargo run -- [OPTIONS] [SUBCOMMAND]
 ### Commands
 
 - `path` — display current PATH
-- `path add <location> [name]` — append a new entry to the PATH; name is
-  optional and, if omitted, defaults to the location string. **Only entries
-  where a name is provided are written to the `.path` file.**
-- `path add --pre <location> [name]` — prepend instead of append
-- `path add --exclusive …` — mark entry exclusive (extra field stored)
+- `path add <location-or-name> [name]` — append to PATH.
+  - If `<location-or-name>` matches a stored short name, that stored location is used.
+  - Otherwise it must be an absolute path (`/…`) or dot-relative (`./…`, `../…`).
+  - If the path exists, it must be a directory (files are rejected).
+  - If `name` is provided, it must be alphanumeric and unique.
+  - Only entries with an explicit `name` are written to `.path`.
+- `path add --pre <location-or-name> [name]` — prepend instead of append
+- `path remove <location-or-name>` — remove from PATH
+  - If the argument matches a stored short name, the stored entry is removed and its location is removed from PATH.
+  - Otherwise the argument is treated as a path (same absolute/dot-relative validation), and matching stored locations are removed.
 - `path list` — show all saved entries from the `.path` file
 
-**Note:** when the tool reads the `.path` file at startup it will abort with
-an error if it encounters any entry lacking a name. Previously such entries
-were silently removed, but the program now enforces the rule to avoid
-accidental loss of data.
+**Startup validation note:** when reading `.path`, the tool aborts if it finds:
+- a nameless entry,
+- a non-alphanumeric name,
+- duplicate names.
+
+Missing filesystem locations only produce warnings (they are not auto-removed).
 
 Example:
 
@@ -32,6 +39,15 @@ Example:
 path add /usr/local/bin             # store entry with name "/usr/local/bin"
 path add /home/$USER/.bin home      # store with short name "home"
 path add --pre /opt/custom/bin      # prepend to PATH instead of append
+path add home                        # uses stored name "home" if present
+path remove /home/$USER/.bin         # remove by path
+path remove home                     # remove by stored short name
+
+# invalid unless "foo" is a stored name
+path add foo
+
+# invalid because .path is a file, not a directory
+path add .path
 ```
 
 Entries are persisted to a `.path` file in the current directory, but
@@ -46,7 +62,4 @@ You can also install a release build and invoke it directly:
 cargo install --path .
 path add /some/dir
 ```
-
-Additional functionality (removing, restoring, etc.) may appear in future
-releases.
 

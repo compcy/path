@@ -226,22 +226,50 @@ fn main() {
                         .takes_value(false),
                 ),
         )
+        .subcommand(
+            SubCommand::with_name("remove")
+                .about("Remove a directory from PATH and optionally from the .path store")
+                .arg(
+                    Arg::with_name("location")
+                        .help("Location or stored name to remove from PATH")
+                        .required(true)
+                        .index(1),
+                ),
+        )
         .subcommand(SubCommand::with_name("list").about("List entries stored in the .path file"))
         .get_matches();
 
     if let Some(add_matches) = matches.subcommand_matches("add") {
         let mut loc = add_matches.value_of("location").unwrap().to_string();
+        let mut resolved_by_name = false;
 
         // Check if the location argument is actually a stored name in the .path file
         // If so, use the associated path instead
         if let Ok(entries) = load_entries() {
             if let Some(entry) = entries.iter().find(|e| e.name == loc) {
                 loc = entry.location.clone();
+                resolved_by_name = true;
             }
         }
 
-        // warn immediately if the specified location doesn't currently exist
-        if !Path::new(&loc).exists() {
+        // enforce that bare strings which weren't resolved by name are proper
+        // paths: either absolute or start with '.'
+        if !(resolved_by_name || loc.starts_with('/') || loc.starts_with('.')) {
+            eprintln!("error: path '{}' must be absolute or start with '.'", loc);
+            std::process::exit(1);
+        }
+
+        // ensure that if the path exists it is a directory, not a file
+        if Path::new(&loc).exists() {
+            match fs::metadata(&loc) {
+                Ok(meta) if !meta.is_dir() => {
+                    eprintln!("error: '{}' exists but is not a directory", loc);
+                    std::process::exit(1);
+                }
+                _ => {}
+            }
+        } else {
+            // warn if the location doesn't currently exist at all
             eprintln!("warning: added path '{}' does not exist", loc);
         }
         // name may be supplied as second positional argument; keep track of the
@@ -308,6 +336,45 @@ fn main() {
                 format!("{}:{}", current, loc)
             }
         };
+        println!("{}", new_path);
+        return;
+    }
+
+    if let Some(remove_matches) = matches.subcommand_matches("remove") {
+        let arg = remove_matches.value_of("location").unwrap().to_string();
+        // determine whether this is a stored name
+        let mut loc_to_remove = arg.clone();
+        if let Ok(mut entries) = load_entries() {
+            if let Some(pos) = entries.iter().position(|e| e.name == arg) {
+                // remove the stored entry with this name and use its location
+                let entry = entries.remove(pos);
+                loc_to_remove = entry.location.clone();
+                if let Err(e) = save_entries(&entries) {
+                    eprintln!("warning: failed to update store file: {}", e);
+                }
+            } else {
+                // treat as a path; enforce format and canonicalize if possible
+                if !(arg.starts_with('/') || arg.starts_with('.')) {
+                    eprintln!("error: path '{}' must be absolute or start with '.'", arg);
+                    std::process::exit(1);
+                }
+                loc_to_remove = match fs::canonicalize(&arg) {
+                    Ok(p) => p.to_string_lossy().into_owned(),
+                    Err(_) => arg.clone(),
+                };
+                // remove any stored entries that match this location
+                entries.retain(|e| e.location != loc_to_remove);
+                if let Err(e) = save_entries(&entries) {
+                    eprintln!("warning: failed to update store file: {}", e);
+                }
+            }
+        }
+
+        // compute new PATH with the location removed
+        let current = env::var("PATH").unwrap_or_default();
+        let parts: Vec<&str> = current.split(':').collect();
+        let filtered: Vec<&str> = parts.into_iter().filter(|p| *p != loc_to_remove).collect();
+        let new_path = filtered.join(":");
         println!("{}", new_path);
         return;
     }
