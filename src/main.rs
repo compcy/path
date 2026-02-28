@@ -1,6 +1,6 @@
 #![deny(warnings)]
 
-use clap::{App, Arg, SubCommand};
+use clap::{App, Arg, ArgMatches, SubCommand};
 use std::env;
 use std::fs;
 use std::io::{self, BufRead};
@@ -189,13 +189,8 @@ fn validate_entries() -> io::Result<()> {
     Ok(())
 }
 
-fn main() {
-    // perform validation on startup; ignore errors other than reporting them
-    if let Err(e) = validate_entries() {
-        eprintln!("warning: could not validate entries: {}", e);
-    }
-
-    let matches = App::new("path")
+fn build_cli() -> App<'static, 'static> {
+    App::new("path")
         .version("0.1.0")
         .about("Utility for inspecting and manipulating the PATH environment variable")
         .subcommand(
@@ -247,183 +242,297 @@ fn main() {
                 ),
         )
         .subcommand(SubCommand::with_name("list").about("List entries stored in the .path file"))
-        .get_matches();
+}
 
-    if let Some(add_matches) = matches.subcommand_matches("add") {
-        let mut loc = add_matches.value_of("location").unwrap().to_string();
-        let mut resolved_by_name = false;
+fn resolve_location_by_name(input: &str, entries: &[PathEntry]) -> Option<String> {
+    entries
+        .iter()
+        .find(|entry| entry.name == input)
+        .map(|entry| entry.location.clone())
+}
 
-        // Check if the location argument is actually a stored name in the .path file
-        // If so, use the associated path instead
-        if let Ok(entries) = load_entries() {
-            if let Some(entry) = entries.iter().find(|e| e.name == loc) {
-                loc = entry.location.clone();
-                resolved_by_name = true;
-            }
+fn is_path_argument_valid(path: &str) -> bool {
+    path.starts_with('/') || path.starts_with('.')
+}
+
+fn compose_path(current: &str, location: &str, prepend: bool) -> String {
+    if prepend {
+        format!("{}:{}", location, current)
+    } else if current.is_empty() {
+        location.to_string()
+    } else {
+        format!("{}:{}", current, location)
+    }
+}
+
+fn remove_from_path(current: &str, location: &str) -> String {
+    current
+        .split(':')
+        .filter(|segment| *segment != location)
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+fn format_list_entry(entry: &PathEntry) -> String {
+    if entry.name != entry.location {
+        format!("{} ({})", entry.location, entry.name)
+    } else {
+        entry.location.clone()
+    }
+}
+
+fn handle_add(add_matches: &ArgMatches) {
+    let mut location = add_matches.value_of("location").unwrap().to_string();
+    let mut resolved_by_name = false;
+
+    if let Ok(entries) = load_entries() {
+        if let Some(resolved_location) = resolve_location_by_name(&location, &entries) {
+            location = resolved_location;
+            resolved_by_name = true;
         }
+    }
 
-        // enforce that bare strings which weren't resolved by name are proper
-        // paths: either absolute or start with '.'
-        if !(resolved_by_name || loc.starts_with('/') || loc.starts_with('.')) {
-            eprintln!("error: path '{}' must be absolute or start with '.'", loc);
+    if !resolved_by_name && !is_path_argument_valid(&location) {
+        eprintln!(
+            "error: path '{}' must be absolute or start with '.'",
+            location
+        );
+        std::process::exit(1);
+    }
+
+    if Path::new(&location).exists() {
+        match fs::metadata(&location) {
+            Ok(meta) if !meta.is_dir() => {
+                eprintln!("error: '{}' exists but is not a directory", location);
+                std::process::exit(1);
+            }
+            _ => {}
+        }
+    } else {
+        eprintln!("warning: added path '{}' does not exist", location);
+    }
+
+    let name_opt = add_matches.value_of("name").map(|value| value.to_string());
+    let exclusivity = if add_matches.is_present("exclusive") {
+        Some(true)
+    } else {
+        None
+    };
+
+    if let Some(name) = name_opt {
+        if !is_valid_name(&name) {
+            eprintln!(
+                "error: invalid name '{}': names must contain only alphanumeric characters",
+                name
+            );
             std::process::exit(1);
         }
 
-        // ensure that if the path exists it is a directory, not a file
-        if Path::new(&loc).exists() {
-            match fs::metadata(&loc) {
-                Ok(meta) if !meta.is_dir() => {
-                    eprintln!("error: '{}' exists but is not a directory", loc);
-                    std::process::exit(1);
-                }
-                _ => {}
+        if let Ok(mut entries) = load_entries() {
+            if entries.iter().any(|entry| entry.name == name) {
+                eprintln!("error: name '{}' is already in use", name);
+                std::process::exit(1);
             }
-        } else {
-            // warn if the location doesn't currently exist at all
-            eprintln!("warning: added path '{}' does not exist", loc);
+
+            let stored_location = match fs::canonicalize(&location) {
+                Ok(path) => path.to_string_lossy().into_owned(),
+                Err(_) => {
+                    eprintln!(
+                        "warning: could not canonicalize path '{}', storing as-is",
+                        location
+                    );
+                    location.clone()
+                }
+            };
+
+            entries.push(PathEntry {
+                location: stored_location,
+                name,
+                exclusivity,
+                line_number: 0,
+            });
+
+            if let Err(error) = save_entries(&entries) {
+                eprintln!("warning: failed to update store file: {}", error);
+            }
         }
-        // name may be supplied as second positional argument; keep track of the
-        // optional value separately so we know whether it was provided by the
-        // user. If absent we won't write anything to the store.
-        let name_opt = add_matches.value_of("name").map(|s| s.to_string());
+    }
 
-        let exclusivity = if add_matches.is_present("exclusive") {
-            Some(true)
-        } else {
-            None
+    let prepend = add_matches.is_present("pre");
+    let current = env::var("PATH").unwrap_or_default();
+    let updated = compose_path(&current, &location, prepend);
+    println!("{}", updated);
+}
+
+fn handle_remove(remove_matches: &ArgMatches) {
+    let argument = remove_matches.value_of("location").unwrap().to_string();
+    let mut location_to_remove = argument.clone();
+    let mut resolved_by_name = false;
+
+    if let Ok(entries) = load_entries() {
+        if let Some(resolved_location) = resolve_location_by_name(&argument, &entries) {
+            location_to_remove = resolved_location;
+            resolved_by_name = true;
+        }
+    }
+
+    if !resolved_by_name {
+        if !is_path_argument_valid(&argument) {
+            eprintln!(
+                "error: path '{}' must be absolute or start with '.'",
+                argument
+            );
+            std::process::exit(1);
+        }
+
+        location_to_remove = match fs::canonicalize(&argument) {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(_) => argument.clone(),
         };
+    }
 
-        // persist only if a name was explicitly given
-        if let Some(name_str) = name_opt {
-            // validate name format (alphanumeric only)
-            if !is_valid_name(&name_str) {
+    let current = env::var("PATH").unwrap_or_default();
+    println!("{}", remove_from_path(&current, &location_to_remove));
+}
+
+fn handle_delete(delete_matches: &ArgMatches) {
+    let argument = delete_matches.value_of("location").unwrap().to_string();
+
+    if let Ok(mut entries) = load_entries() {
+        if let Some(position) = entries.iter().position(|entry| entry.name == argument) {
+            entries.remove(position);
+        } else {
+            if !is_path_argument_valid(&argument) {
                 eprintln!(
-                    "error: invalid name '{}': names must contain only alphanumeric characters",
-                    name_str
+                    "error: path '{}' must be absolute or start with '.'",
+                    argument
                 );
                 std::process::exit(1);
             }
-            if let Ok(mut entries) = load_entries() {
-                // reject if this name is already in use
-                if entries.iter().any(|e| e.name == name_str) {
-                    eprintln!("error: name '{}' is already in use", name_str);
-                    std::process::exit(1);
-                }
-                // attempt to turn the location into an absolute path so that
-                // later validation works regardless of current working
-                // directory.
-                let stored_loc = match fs::canonicalize(&loc) {
-                    Ok(p) => p.to_string_lossy().into_owned(),
-                    Err(_) => {
-                        eprintln!(
-                            "warning: could not canonicalize path '{}', storing as-is",
-                            loc
-                        );
-                        loc.to_string()
-                    }
-                };
-                entries.push(PathEntry {
-                    location: stored_loc,
-                    name: name_str,
-                    exclusivity,
-                    line_number: 0,
-                });
-                if let Err(e) = save_entries(&entries) {
-                    eprintln!("warning: failed to update store file: {}", e);
-                }
-            }
+
+            let location_to_delete = match fs::canonicalize(&argument) {
+                Ok(path) => path.to_string_lossy().into_owned(),
+                Err(_) => argument.clone(),
+            };
+            entries.retain(|entry| entry.location != location_to_delete);
         }
 
-        let prepend = add_matches.is_present("pre");
-        let current = env::var("PATH").unwrap_or_default();
-        let new_path = if prepend {
-            format!("{}:{}", loc, current)
-        } else {
-            // default to append
-            if current.is_empty() {
-                loc
-            } else {
-                format!("{}:{}", current, loc)
-            }
-        };
-        println!("{}", new_path);
+        if let Err(error) = save_entries(&entries) {
+            eprintln!("warning: failed to update store file: {}", error);
+        }
+    }
+}
+
+fn handle_list() {
+    if let Ok(entries) = load_entries() {
+        for entry in entries {
+            println!("{}", format_list_entry(&entry));
+        }
+    }
+}
+
+fn print_current_path() {
+    match env::var("PATH") {
+        Ok(path) => println!("{}", path),
+        Err(error) => eprintln!("Failed to read PATH: {}", error),
+    }
+}
+
+fn main() {
+    if let Err(error) = validate_entries() {
+        eprintln!("warning: could not validate entries: {}", error);
+    }
+
+    let matches = build_cli().get_matches();
+
+    if let Some(add_matches) = matches.subcommand_matches("add") {
+        handle_add(add_matches);
         return;
     }
 
     if let Some(remove_matches) = matches.subcommand_matches("remove") {
-        let arg = remove_matches.value_of("location").unwrap().to_string();
-        // determine whether this is a stored name; if so resolve to its location
-        let mut loc_to_remove = arg.clone();
-        let mut resolved_by_name = false;
-        if let Ok(entries) = load_entries() {
-            if let Some(entry) = entries.iter().find(|e| e.name == arg) {
-                loc_to_remove = entry.location.clone();
-                resolved_by_name = true;
-            }
-        }
-
-        // if not resolved by name, treat as a path
-        if !resolved_by_name {
-            if !(arg.starts_with('/') || arg.starts_with('.')) {
-                eprintln!("error: path '{}' must be absolute or start with '.'", arg);
-                std::process::exit(1);
-            }
-            loc_to_remove = match fs::canonicalize(&arg) {
-                Ok(p) => p.to_string_lossy().into_owned(),
-                Err(_) => arg.clone(),
-            };
-        }
-
-        // compute new PATH with the location removed
-        let current = env::var("PATH").unwrap_or_default();
-        let parts: Vec<&str> = current.split(':').collect();
-        let filtered: Vec<&str> = parts.into_iter().filter(|p| *p != loc_to_remove).collect();
-        let new_path = filtered.join(":");
-        println!("{}", new_path);
+        handle_remove(remove_matches);
         return;
     }
 
     if let Some(delete_matches) = matches.subcommand_matches("delete") {
-        let arg = delete_matches.value_of("location").unwrap().to_string();
-        if let Ok(mut entries) = load_entries() {
-            if let Some(pos) = entries.iter().position(|e| e.name == arg) {
-                entries.remove(pos);
-            } else {
-                if !(arg.starts_with('/') || arg.starts_with('.')) {
-                    eprintln!("error: path '{}' must be absolute or start with '.'", arg);
-                    std::process::exit(1);
-                }
-                let loc_to_delete = match fs::canonicalize(&arg) {
-                    Ok(p) => p.to_string_lossy().into_owned(),
-                    Err(_) => arg.clone(),
-                };
-                entries.retain(|e| e.location != loc_to_delete);
-            }
-
-            if let Err(e) = save_entries(&entries) {
-                eprintln!("warning: failed to update store file: {}", e);
-            }
-        }
+        handle_delete(delete_matches);
         return;
     }
 
     if matches.subcommand_matches("list").is_some() {
-        // display each stored entry; show name if it's different from location
-        if let Ok(entries) = load_entries() {
-            for e in entries {
-                if e.name != e.location {
-                    println!("{} ({})", e.location, e.name);
-                } else {
-                    println!("{}", e.location);
-                }
-            }
-        }
+        handle_list();
         return;
     }
 
-    // No subcommand: just print the current PATH
-    match env::var("PATH") {
-        Ok(path) => println!("{}", path),
-        Err(e) => eprintln!("Failed to read PATH: {}", e),
+    print_current_path();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_entry_line_parses_three_fields() {
+        let entry = parse_entry_line("/tmp/tools\ttools\ttrue", 7).unwrap();
+        assert_eq!(entry.location, "/tmp/tools");
+        assert_eq!(entry.name, "tools");
+        assert_eq!(entry.exclusivity, Some(true));
+        assert_eq!(entry.line_number, 7);
+    }
+
+    #[test]
+    fn parse_entry_line_without_tab_creates_nameless_entry() {
+        let entry = parse_entry_line("/tmp/tools", 3).unwrap();
+        assert_eq!(entry.location, "/tmp/tools");
+        assert_eq!(entry.name, "");
+        assert_eq!(entry.exclusivity, None);
+    }
+
+    #[test]
+    fn compose_path_appends_or_prepends() {
+        assert_eq!(compose_path("A:B", "/tmp/x", false), "A:B:/tmp/x");
+        assert_eq!(compose_path("A:B", "/tmp/x", true), "/tmp/x:A:B");
+        assert_eq!(compose_path("", "/tmp/x", false), "/tmp/x");
+    }
+
+    #[test]
+    fn remove_from_path_removes_exact_segments() {
+        assert_eq!(remove_from_path("/a:/b:/c", "/b"), "/a:/c");
+        assert_eq!(remove_from_path("/a:/b:/a", "/a"), "/b");
+    }
+
+    #[test]
+    fn resolve_location_by_name_returns_matching_location() {
+        let entries = vec![PathEntry {
+            location: "/usr/local/bin".to_string(),
+            name: "tools".to_string(),
+            exclusivity: None,
+            line_number: 1,
+        }];
+        assert_eq!(
+            resolve_location_by_name("tools", &entries),
+            Some("/usr/local/bin".to_string())
+        );
+        assert_eq!(resolve_location_by_name("missing", &entries), None);
+    }
+
+    #[test]
+    fn format_list_entry_includes_name_when_different() {
+        let entry = PathEntry {
+            location: "/usr/local/bin".to_string(),
+            name: "tools".to_string(),
+            exclusivity: None,
+            line_number: 0,
+        };
+        assert_eq!(format_list_entry(&entry), "/usr/local/bin (tools)");
+
+        let same = PathEntry {
+            location: "/usr/bin".to_string(),
+            name: "/usr/bin".to_string(),
+            exclusivity: None,
+            line_number: 0,
+        };
+        assert_eq!(format_list_entry(&same), "/usr/bin");
     }
 }
