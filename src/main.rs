@@ -231,7 +231,7 @@ fn main() {
 
     if let Some(add_matches) = matches.subcommand_matches("add") {
         let mut loc = add_matches.value_of("location").unwrap().to_string();
-        
+
         // Check if the location argument is actually a stored name in the .path file
         // If so, use the associated path instead
         if let Ok(entries) = load_entries() {
@@ -239,7 +239,7 @@ fn main() {
                 loc = entry.location.clone();
             }
         }
-        
+
         // warn immediately if the specified location doesn't currently exist
         if !Path::new(&loc).exists() {
             eprintln!("warning: added path '{}' does not exist", loc);
