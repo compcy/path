@@ -11,7 +11,7 @@ commands that compute PATH output a shell assignment like
 If you prefer not to type `eval` each time, source the wrapper script once:
 
 ```sh
-source ./path-wrapper.sh
+. ./path-wrapper.sh
 ```
 
 Then `path add ...` and `path remove ...` automatically apply to the current
@@ -27,7 +27,7 @@ cargo run -- [OPTIONS] [SUBCOMMAND]
 eval "$(path add /some/dir mydir)"
 
 # or source the wrapper once and run directly
-source ./path-wrapper.sh
+. ./path-wrapper.sh
 path add /some/dir mydir
 ```
 
