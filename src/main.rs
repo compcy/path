@@ -255,10 +255,10 @@ fn is_path_argument_valid(path: &str) -> bool {
 }
 
 fn compose_path(current: &str, location: &str, prepend: bool) -> String {
-    if prepend {
-        format!("{}:{}", location, current)
-    } else if current.is_empty() {
+    if current.is_empty() {
         location.to_string()
+    } else if prepend {
+        format!("{}:{}", location, current)
     } else {
         format!("{}:{}", current, location)
     }
@@ -544,6 +544,7 @@ mod tests {
         assert_eq!(compose_path("A:B", "/tmp/x", false), "A:B:/tmp/x");
         assert_eq!(compose_path("A:B", "/tmp/x", true), "/tmp/x:A:B");
         assert_eq!(compose_path("", "/tmp/x", false), "/tmp/x");
+        assert_eq!(compose_path("", "/tmp/x", true), "/tmp/x");
     }
 
     #[test]
