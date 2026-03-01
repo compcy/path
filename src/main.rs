@@ -264,6 +264,33 @@ fn compose_path(current: &str, location: &str, prepend: bool) -> String {
     }
 }
 
+fn path_contains_segment(current: &str, candidate: &str) -> bool {
+    current.split(':').any(|segment| segment == candidate)
+}
+
+fn canonicalize_for_path_output(location: &str) -> Option<String> {
+    fs::canonicalize(location)
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+fn path_contains_equivalent_directory(current: &str, candidate: &str) -> bool {
+    if path_contains_segment(current, candidate) {
+        return true;
+    }
+
+    let candidate_canonical = match canonicalize_for_path_output(candidate) {
+        Some(path) => path,
+        None => return false,
+    };
+
+    current.split(':').any(|segment| {
+        canonicalize_for_path_output(segment)
+            .map(|canonical| canonical == candidate_canonical)
+            .unwrap_or(false)
+    })
+}
+
 fn quote_for_shell_single(s: &str) -> String {
     s.replace('\'', "'\\''")
 }
@@ -387,9 +414,17 @@ fn handle_add(add_matches: &ArgMatches) {
         }
     }
 
+    let env_location = canonicalize_for_path_output(&location).unwrap_or_else(|| location.clone());
     let prepend = add_matches.is_present("pre");
     let current = env::var("PATH").unwrap_or_default();
-    let updated = compose_path(&current, &location, prepend);
+
+    let should_add = !path_contains_equivalent_directory(&current, &env_location);
+
+    let updated = if should_add {
+        compose_path(&current, &env_location, prepend)
+    } else {
+        current
+    };
     println!("{}", format_export_path(&updated));
 }
 
@@ -545,6 +580,25 @@ mod tests {
         assert_eq!(compose_path("A:B", "/tmp/x", true), "/tmp/x:A:B");
         assert_eq!(compose_path("", "/tmp/x", false), "/tmp/x");
         assert_eq!(compose_path("", "/tmp/x", true), "/tmp/x");
+    }
+
+    #[test]
+    fn path_contains_segment_matches_exact_entries() {
+        assert!(path_contains_segment("/a:/b:/c", "/b"));
+        assert!(!path_contains_segment("/a:/b:/c", "/d"));
+    }
+
+    #[test]
+    fn path_contains_equivalent_directory_matches_canonical_equivalent() {
+        let cwd = env::current_dir().unwrap().to_string_lossy().into_owned();
+        assert!(path_contains_equivalent_directory(".:/usr/bin", &cwd));
+    }
+
+    #[test]
+    fn canonicalize_for_path_output_resolves_dot() {
+        let canonical = canonicalize_for_path_output(".").unwrap();
+        let cwd = env::current_dir().unwrap().to_string_lossy().into_owned();
+        assert_eq!(canonical, cwd);
     }
 
     #[test]
