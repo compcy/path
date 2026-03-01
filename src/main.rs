@@ -83,10 +83,9 @@ fn load_entries() -> io::Result<Vec<PathEntry>> {
     let file = fs::File::open(path)?;
     let reader = io::BufReader::new(file);
     let mut entries = Vec::new();
-    let mut line_number = 0;
-    for l in reader.lines().map_while(Result::ok) {
-        line_number += 1;
-        if let Some(e) = parse_entry_line(&l, line_number) {
+    for (index, line) in reader.lines().enumerate() {
+        let line = line?;
+        if let Some(e) = parse_entry_line(&line, index + 1) {
             entries.push(e);
         }
     }
@@ -115,9 +114,9 @@ fn save_entries(entries: &[PathEntry]) -> io::Result<()> {
 /// current `PATH` environment variable.  The function is intentionally kept
 /// small; helper routines above manage persistence to the `.path` store.
 /// Check the existing entries, reporting any whose `location` does not
-/// currently exist.  If invalid entries are found, prints them and prompts
-/// the user on stdin to optionally remove them.  Returns an I/O error only if
-/// reading/writing fails.
+/// currently exist.  Nameless/invalid/duplicate names are fatal errors;
+/// missing locations are warnings only. Returns an I/O error only if
+/// reading fails.
 fn validate_entries() -> io::Result<()> {
     let entries = load_entries()?;
 
@@ -265,10 +264,16 @@ fn compose_path(current: &str, location: &str, prepend: bool) -> String {
     }
 }
 
-fn remove_from_path(current: &str, location: &str) -> String {
+fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -> String {
     current
         .split(':')
-        .filter(|segment| *segment != location)
+        .filter(|segment| {
+            *segment != location
+                && match raw_path_arg {
+                    Some(raw) => *segment != raw,
+                    None => true,
+                }
+        })
         .collect::<Vec<_>>()
         .join(":")
 }
@@ -285,10 +290,18 @@ fn handle_add(add_matches: &ArgMatches) {
     let mut location = add_matches.value_of("location").unwrap().to_string();
     let mut resolved_by_name = false;
 
-    if let Ok(entries) = load_entries() {
-        if let Some(resolved_location) = resolve_location_by_name(&location, &entries) {
-            location = resolved_location;
-            resolved_by_name = true;
+    match load_entries() {
+        Ok(entries) => {
+            if let Some(resolved_location) = resolve_location_by_name(&location, &entries) {
+                location = resolved_location;
+                resolved_by_name = true;
+            }
+        }
+        Err(error) => {
+            eprintln!(
+                "warning: failed to load store file, treating argument as path: {}",
+                error
+            );
         }
     }
 
@@ -328,32 +341,40 @@ fn handle_add(add_matches: &ArgMatches) {
             std::process::exit(1);
         }
 
-        if let Ok(mut entries) = load_entries() {
-            if entries.iter().any(|entry| entry.name == name) {
-                eprintln!("error: name '{}' is already in use", name);
-                std::process::exit(1);
-            }
-
-            let stored_location = match fs::canonicalize(&location) {
-                Ok(path) => path.to_string_lossy().into_owned(),
-                Err(_) => {
-                    eprintln!(
-                        "warning: could not canonicalize path '{}', storing as-is",
-                        location
-                    );
-                    location.clone()
+        match load_entries() {
+            Ok(mut entries) => {
+                if entries.iter().any(|entry| entry.name == name) {
+                    eprintln!("error: name '{}' is already in use", name);
+                    std::process::exit(1);
                 }
-            };
 
-            entries.push(PathEntry {
-                location: stored_location,
-                name,
-                exclusivity,
-                line_number: 0,
-            });
+                let stored_location = match fs::canonicalize(&location) {
+                    Ok(path) => path.to_string_lossy().into_owned(),
+                    Err(_) => {
+                        eprintln!(
+                            "warning: could not canonicalize path '{}', storing as-is",
+                            location
+                        );
+                        location.clone()
+                    }
+                };
 
-            if let Err(error) = save_entries(&entries) {
-                eprintln!("warning: failed to update store file: {}", error);
+                entries.push(PathEntry {
+                    location: stored_location,
+                    name,
+                    exclusivity,
+                    line_number: 0,
+                });
+
+                if let Err(error) = save_entries(&entries) {
+                    eprintln!("warning: failed to update store file: {}", error);
+                }
+            }
+            Err(error) => {
+                eprintln!(
+                    "warning: failed to load store file, not updating named entries: {}",
+                    error
+                );
             }
         }
     }
@@ -376,6 +397,7 @@ fn handle_remove(remove_matches: &ArgMatches) {
         }
     }
 
+    let mut raw_path_arg = None;
     if !resolved_by_name {
         if !is_path_argument_valid(&argument) {
             eprintln!(
@@ -389,44 +411,60 @@ fn handle_remove(remove_matches: &ArgMatches) {
             Ok(path) => path.to_string_lossy().into_owned(),
             Err(_) => argument.clone(),
         };
+        raw_path_arg = Some(argument.as_str());
     }
 
     let current = env::var("PATH").unwrap_or_default();
-    println!("{}", remove_from_path(&current, &location_to_remove));
+    println!(
+        "{}",
+        remove_from_path(&current, &location_to_remove, raw_path_arg)
+    );
 }
 
 fn handle_delete(delete_matches: &ArgMatches) {
     let argument = delete_matches.value_of("location").unwrap().to_string();
 
-    if let Ok(mut entries) = load_entries() {
-        if let Some(position) = entries.iter().position(|entry| entry.name == argument) {
-            entries.remove(position);
-        } else {
-            if !is_path_argument_valid(&argument) {
-                eprintln!(
-                    "error: path '{}' must be absolute or start with '.'",
-                    argument
-                );
-                std::process::exit(1);
-            }
+    let mut entries = match load_entries() {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!("error: failed to load entries: {}", error);
+            std::process::exit(1);
+        }
+    };
 
-            let location_to_delete = match fs::canonicalize(&argument) {
-                Ok(path) => path.to_string_lossy().into_owned(),
-                Err(_) => argument.clone(),
-            };
-            entries.retain(|entry| entry.location != location_to_delete);
+    if let Some(position) = entries.iter().position(|entry| entry.name == argument) {
+        entries.remove(position);
+    } else {
+        if !is_path_argument_valid(&argument) {
+            eprintln!(
+                "error: path '{}' must be absolute or start with '.'",
+                argument
+            );
+            std::process::exit(1);
         }
 
-        if let Err(error) = save_entries(&entries) {
-            eprintln!("warning: failed to update store file: {}", error);
-        }
+        let location_to_delete = match fs::canonicalize(&argument) {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(_) => argument.clone(),
+        };
+        entries.retain(|entry| entry.location != location_to_delete);
+    }
+
+    if let Err(error) = save_entries(&entries) {
+        eprintln!("warning: failed to update store file: {}", error);
     }
 }
 
 fn handle_list() {
-    if let Ok(entries) = load_entries() {
-        for entry in entries {
-            println!("{}", format_list_entry(&entry));
+    match load_entries() {
+        Ok(entries) => {
+            for entry in entries {
+                println!("{}", format_list_entry(&entry));
+            }
+        }
+        Err(error) => {
+            eprintln!("error: failed to load entries: {}", error);
+            std::process::exit(1);
         }
     }
 }
@@ -498,8 +536,16 @@ mod tests {
 
     #[test]
     fn remove_from_path_removes_exact_segments() {
-        assert_eq!(remove_from_path("/a:/b:/c", "/b"), "/a:/c");
-        assert_eq!(remove_from_path("/a:/b:/a", "/a"), "/b");
+        assert_eq!(remove_from_path("/a:/b:/c", "/b", None), "/a:/c");
+        assert_eq!(remove_from_path("/a:/b:/a", "/a", None), "/b");
+    }
+
+    #[test]
+    fn remove_from_path_also_matches_raw_argument() {
+        assert_eq!(
+            remove_from_path("./rel:/usr/bin", "/abs/rel", Some("./rel")),
+            "/usr/bin"
+        );
     }
 
     #[test]

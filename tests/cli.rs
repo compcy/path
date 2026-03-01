@@ -376,3 +376,53 @@ fn delete_removes_store_entry_by_name() {
     assert!(!contents.contains("/tmp\thome"));
     assert!(contents.contains("/usr/bin\tsys"));
 }
+
+/// `remove` by path should match both canonicalized and raw PATH segments.
+#[test]
+fn remove_by_path_matches_raw_segment_too() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    fs::create_dir(dir.join("rel")).unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "./rel:/usr/bin");
+    let output = cmd
+        .arg("remove")
+        .arg("./rel")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert_eq!(out_str.trim(), "/usr/bin");
+}
+
+/// `list` should fail if the store cannot be loaded.
+#[test]
+fn list_fails_when_store_is_unreadable() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    fs::create_dir(dir.join(".path")).unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    let assert = cmd.arg("list").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("error: failed to load entries"));
+}
+
+/// `delete` should fail if the store cannot be loaded.
+#[test]
+fn delete_fails_when_store_is_unreadable() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    fs::create_dir(dir.join(".path")).unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    let assert = cmd.arg("delete").arg("home").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("error: failed to load entries"));
+}

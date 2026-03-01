@@ -40,7 +40,7 @@ Missing filesystem locations only produce warnings (they are not auto-removed).
 Example:
 
 ```sh
-path add /usr/local/bin             # store entry with name "/usr/local/bin"
+path add /usr/local/bin             # append only; not stored (no explicit name)
 path add /home/$USER/.bin home      # store with short name "home"
 path add --pre /opt/custom/bin      # prepend to PATH instead of append
 path add home                        # uses stored name "home" if present
