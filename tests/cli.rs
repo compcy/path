@@ -24,6 +24,7 @@ fn prints_path_env() {
     cmd.env("PATH", "foo:bar");
     cmd.assert()
         .success()
+        .stdout(predicate::str::contains("export PATH='"))
         .stdout(predicate::str::contains("foo:bar"));
 }
 
@@ -40,6 +41,7 @@ fn add_appends_but_only_records_with_name() {
     cmd.arg("add").arg("/tmp/x");
     cmd.assert()
         .success()
+        .stdout(predicate::str::contains("export PATH='"))
         .stdout(predicate::str::contains("A:/tmp/x"));
 
     // verify store file does not contain an entry
@@ -61,6 +63,7 @@ fn add_with_name_and_prepend() {
     cmd.arg("add").arg("--pre").arg("/tmp/y").arg("yname");
     cmd.assert()
         .success()
+        .stdout(predicate::str::contains("export PATH='"))
         .stdout(predicate::str::contains("/tmp/y:B"));
 
     let store = dir.join(".path");
@@ -396,7 +399,7 @@ fn remove_by_path_matches_raw_segment_too() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert_eq!(out_str.trim(), "/usr/bin");
+    assert_eq!(out_str.trim(), "export PATH='/usr/bin'");
 }
 
 /// `list` should fail if the store cannot be loaded.

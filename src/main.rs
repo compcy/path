@@ -264,6 +264,14 @@ fn compose_path(current: &str, location: &str, prepend: bool) -> String {
     }
 }
 
+fn quote_for_shell_single(s: &str) -> String {
+    s.replace('\'', "'\\''")
+}
+
+fn format_export_path(path: &str) -> String {
+    format!("export PATH='{}'", quote_for_shell_single(path))
+}
+
 fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -> String {
     current
         .split(':')
@@ -382,7 +390,7 @@ fn handle_add(add_matches: &ArgMatches) {
     let prepend = add_matches.is_present("pre");
     let current = env::var("PATH").unwrap_or_default();
     let updated = compose_path(&current, &location, prepend);
-    println!("{}", updated);
+    println!("{}", format_export_path(&updated));
 }
 
 fn handle_remove(remove_matches: &ArgMatches) {
@@ -417,7 +425,11 @@ fn handle_remove(remove_matches: &ArgMatches) {
     let current = env::var("PATH").unwrap_or_default();
     println!(
         "{}",
-        remove_from_path(&current, &location_to_remove, raw_path_arg)
+        format_export_path(&remove_from_path(
+            &current,
+            &location_to_remove,
+            raw_path_arg
+        ))
     );
 }
 
@@ -471,7 +483,7 @@ fn handle_list() {
 
 fn print_current_path() {
     match env::var("PATH") {
-        Ok(path) => println!("{}", path),
+        Ok(path) => println!("{}", format_export_path(&path)),
         Err(error) => eprintln!("Failed to read PATH: {}", error),
     }
 }
@@ -532,6 +544,15 @@ mod tests {
         assert_eq!(compose_path("A:B", "/tmp/x", false), "A:B:/tmp/x");
         assert_eq!(compose_path("A:B", "/tmp/x", true), "/tmp/x:A:B");
         assert_eq!(compose_path("", "/tmp/x", false), "/tmp/x");
+    }
+
+    #[test]
+    fn format_export_path_quotes_for_shell() {
+        assert_eq!(format_export_path("/a:/b"), "export PATH='/a:/b'");
+        assert_eq!(
+            format_export_path("/a'quoted:/b"),
+            "export PATH='/a'\\''quoted:/b'"
+        );
     }
 
     #[test]

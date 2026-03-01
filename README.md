@@ -4,11 +4,31 @@
 `PATH` environment variable. It also keeps a local record of added entries in
 a plain-text `.path` file, with optional names and exclusivity flags.
 
+Because a child process cannot directly modify its parent shell environment,
+commands that compute PATH output a shell assignment like
+`export PATH='...new value...'`.
+
+If you prefer not to type `eval` each time, source the wrapper script once:
+
+```sh
+source ./path-wrapper.sh
+```
+
+Then `path add ...` and `path remove ...` automatically apply to the current
+shell PATH.
+
 ## Usage
 
 ```sh
 # build and run with Cargo
 cargo run -- [OPTIONS] [SUBCOMMAND]
+
+# apply the new PATH in your current shell
+eval "$(path add /some/dir mydir)"
+
+# or source the wrapper once and run directly
+source ./path-wrapper.sh
+path add /some/dir mydir
 ```
 
 ### Commands
