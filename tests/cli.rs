@@ -511,3 +511,72 @@ fn add_does_not_duplicate_equivalent_directory() {
         format!("export PATH='{}:/usr/bin'", with_slash)
     );
 }
+
+/// Adding with `--noauto` should persist `noauto` in the third field.
+#[test]
+fn add_with_noauto_stores_noauto_marker() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    cmd.arg("add")
+        .arg("--noauto")
+        .arg("/tmp/noauto")
+        .arg("noautoentry");
+    cmd.assert().success();
+
+    let store = dir.join(".path");
+    let contents = fs::read_to_string(store).unwrap();
+    assert!(contents.contains("/tmp/noauto\tnoautoentry\tnoauto"));
+}
+
+/// `load` should add only `auto` entries and skip `noauto` entries.
+#[test]
+fn load_adds_only_auto_entries() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(
+        &store,
+        "/opt/auto1\ta1\tauto\n/opt/noauto\tn1\tnoauto\n/opt/auto2\ta2\tauto\n",
+    )
+    .unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    let output = cmd
+        .arg("load")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+
+    assert!(out_str.contains("/opt/auto1"));
+    assert!(out_str.contains("/opt/auto2"));
+    assert!(!out_str.contains("/opt/noauto"));
+}
+
+/// `load` should treat a blank third field as `auto` for manually edited files.
+#[test]
+fn load_treats_blank_third_field_as_auto() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "/opt/manual\tmanual\t\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    let output = cmd
+        .arg("load")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+
+    assert!(out_str.contains("/opt/manual"));
+}
