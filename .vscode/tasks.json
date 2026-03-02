@@ -15,6 +15,18 @@
             "command": "cargo run",
             "group": "none",
             "problemMatcher": ["$rustc"]
+        },
+        {
+            "label": "cargo doc (missing docs)",
+            "type": "shell",
+            "command": "cargo doc --no-deps --document-private-items",
+            "options": {
+                "env": {
+                    "RUSTDOCFLAGS": "-D warnings -W missing-docs"
+                }
+            },
+            "group": "none",
+            "problemMatcher": ["$rustc"]
         }
     ]
 }

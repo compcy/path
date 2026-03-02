@@ -90,3 +90,12 @@ cargo install --path .
 path add /some/dir
 ```
 
+## CI checks
+
+The CI workflow builds, tests, and validates documentation coverage for private
+and public items. To run the docs check locally:
+
+```sh
+RUSTDOCFLAGS="-D warnings -W missing-docs" cargo doc --no-deps --document-private-items
+```
+

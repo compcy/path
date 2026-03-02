@@ -1,3 +1,7 @@
+//! Command-line utility for inspecting and manipulating shell PATH values.
+//!
+//! The binary supports adding, removing, deleting, and listing entries while
+//! optionally persisting named mappings in a local `.path` store file.
 #![deny(warnings)]
 
 use clap::{App, Arg, ArgMatches, SubCommand};
@@ -188,6 +192,7 @@ fn validate_entries() -> io::Result<()> {
     Ok(())
 }
 
+/// Build the command-line interface definition used by `clap`.
 fn build_cli() -> App<'static, 'static> {
     App::new("path")
         .version("0.1.0")
@@ -243,6 +248,7 @@ fn build_cli() -> App<'static, 'static> {
         .subcommand(SubCommand::with_name("list").about("List entries stored in the .path file"))
 }
 
+/// Resolve a user-provided token to a stored location when it matches a name.
 fn resolve_location_by_name(input: &str, entries: &[PathEntry]) -> Option<String> {
     entries
         .iter()
@@ -250,10 +256,14 @@ fn resolve_location_by_name(input: &str, entries: &[PathEntry]) -> Option<String
         .map(|entry| entry.location.clone())
 }
 
+/// Return whether a raw path argument uses an allowed form.
+///
+/// Supported forms are absolute paths and relative paths that begin with `.`.
 fn is_path_argument_valid(path: &str) -> bool {
     path.starts_with('/') || path.starts_with('.')
 }
 
+/// Compose a new PATH string by prepending or appending a location.
 fn compose_path(current: &str, location: &str, prepend: bool) -> String {
     if current.is_empty() {
         location.to_string()
@@ -264,16 +274,24 @@ fn compose_path(current: &str, location: &str, prepend: bool) -> String {
     }
 }
 
+/// Check whether a PATH-like string already contains an exact segment match.
 fn path_contains_segment(current: &str, candidate: &str) -> bool {
     current.split(':').any(|segment| segment == candidate)
 }
 
+/// Canonicalize a location for comparison or output in PATH updates.
+///
+/// Returns `None` when canonicalization fails.
 fn canonicalize_for_path_output(location: &str) -> Option<String> {
     fs::canonicalize(location)
         .ok()
         .map(|path| path.to_string_lossy().into_owned())
 }
 
+/// Determine whether PATH already contains a directory equivalent to `candidate`.
+///
+/// This checks both exact string matches and canonicalized filesystem
+/// equivalence to avoid duplicate entries that differ only syntactically.
 fn path_contains_equivalent_directory(current: &str, candidate: &str) -> bool {
     if path_contains_segment(current, candidate) {
         return true;
@@ -291,14 +309,20 @@ fn path_contains_equivalent_directory(current: &str, candidate: &str) -> bool {
     })
 }
 
+/// Escape single quotes for safe embedding inside a single-quoted shell string.
 fn quote_for_shell_single(s: &str) -> String {
     s.replace('\'', "'\\''")
 }
 
+/// Format a shell export statement for the provided PATH value.
 fn format_export_path(path: &str) -> String {
     format!("export PATH='{}'", quote_for_shell_single(path))
 }
 
+/// Remove matching path segments from a PATH-like string.
+///
+/// In addition to the canonical `location`, this may also remove the original
+/// raw argument form when provided.
 fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -> String {
     current
         .split(':')
@@ -313,6 +337,7 @@ fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -
         .join(":")
 }
 
+/// Format a stored entry for human-readable list output.
 fn format_list_entry(entry: &PathEntry) -> String {
     if entry.name != entry.location {
         format!("{} ({})", entry.location, entry.name)
@@ -321,6 +346,10 @@ fn format_list_entry(entry: &PathEntry) -> String {
     }
 }
 
+/// Handle the `add` subcommand.
+///
+/// This resolves named entries, validates path shape, optionally persists a
+/// named mapping, and prints the resulting PATH export command.
 fn handle_add(add_matches: &ArgMatches) {
     let mut location = add_matches.value_of("location").unwrap().to_string();
     let mut resolved_by_name = false;
@@ -428,6 +457,10 @@ fn handle_add(add_matches: &ArgMatches) {
     println!("{}", format_export_path(&updated));
 }
 
+/// Handle the `remove` subcommand.
+///
+/// This resolves a stored name (or validates a raw path), removes matching
+/// segments from PATH, and prints the resulting export command.
 fn handle_remove(remove_matches: &ArgMatches) {
     let argument = remove_matches.value_of("location").unwrap().to_string();
     let mut location_to_remove = argument.clone();
@@ -468,6 +501,9 @@ fn handle_remove(remove_matches: &ArgMatches) {
     );
 }
 
+/// Handle the `delete` subcommand.
+///
+/// This updates the on-disk store by removing an entry by name or by location.
 fn handle_delete(delete_matches: &ArgMatches) {
     let argument = delete_matches.value_of("location").unwrap().to_string();
 
@@ -502,6 +538,7 @@ fn handle_delete(delete_matches: &ArgMatches) {
     }
 }
 
+/// Handle the `list` subcommand by printing all stored entries.
 fn handle_list() {
     match load_entries() {
         Ok(entries) => {
@@ -516,6 +553,7 @@ fn handle_list() {
     }
 }
 
+/// Print the current PATH value as a shell export statement.
 fn print_current_path() {
     match env::var("PATH") {
         Ok(path) => println!("{}", format_export_path(&path)),
@@ -523,6 +561,10 @@ fn print_current_path() {
     }
 }
 
+/// Program entry point.
+///
+/// Validates stored entries, dispatches subcommands, and falls back to
+/// printing the current PATH when no subcommand is provided.
 fn main() {
     if let Err(error) = validate_entries() {
         eprintln!("warning: could not validate entries: {}", error);
@@ -558,6 +600,7 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Verify three-field lines are parsed into all struct fields.
     fn parse_entry_line_parses_three_fields() {
         let entry = parse_entry_line("/tmp/tools\ttools\ttrue", 7).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
@@ -567,6 +610,7 @@ mod tests {
     }
 
     #[test]
+    /// Verify lines without a tab become nameless entries for later validation.
     fn parse_entry_line_without_tab_creates_nameless_entry() {
         let entry = parse_entry_line("/tmp/tools", 3).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
@@ -575,6 +619,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensure path composition handles both prepend and append behavior.
     fn compose_path_appends_or_prepends() {
         assert_eq!(compose_path("A:B", "/tmp/x", false), "A:B:/tmp/x");
         assert_eq!(compose_path("A:B", "/tmp/x", true), "/tmp/x:A:B");
@@ -583,18 +628,21 @@ mod tests {
     }
 
     #[test]
+    /// Confirm exact-segment matching in colon-delimited PATH strings.
     fn path_contains_segment_matches_exact_entries() {
         assert!(path_contains_segment("/a:/b:/c", "/b"));
         assert!(!path_contains_segment("/a:/b:/c", "/d"));
     }
 
     #[test]
+    /// Confirm canonical-equivalent directories are treated as already present.
     fn path_contains_equivalent_directory_matches_canonical_equivalent() {
         let cwd = env::current_dir().unwrap().to_string_lossy().into_owned();
         assert!(path_contains_equivalent_directory(".:/usr/bin", &cwd));
     }
 
     #[test]
+    /// Ensure canonicalization resolves `.` to the current working directory.
     fn canonicalize_for_path_output_resolves_dot() {
         let canonical = canonicalize_for_path_output(".").unwrap();
         let cwd = env::current_dir().unwrap().to_string_lossy().into_owned();
@@ -602,6 +650,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensure PATH export formatting includes shell-safe single-quote escaping.
     fn format_export_path_quotes_for_shell() {
         assert_eq!(format_export_path("/a:/b"), "export PATH='/a:/b'");
         assert_eq!(
@@ -611,12 +660,14 @@ mod tests {
     }
 
     #[test]
+    /// Ensure remove logic drops all exact matching segments.
     fn remove_from_path_removes_exact_segments() {
         assert_eq!(remove_from_path("/a:/b:/c", "/b", None), "/a:/c");
         assert_eq!(remove_from_path("/a:/b:/a", "/a", None), "/b");
     }
 
     #[test]
+    /// Ensure remove logic can also match the original raw argument form.
     fn remove_from_path_also_matches_raw_argument() {
         assert_eq!(
             remove_from_path("./rel:/usr/bin", "/abs/rel", Some("./rel")),
@@ -625,6 +676,7 @@ mod tests {
     }
 
     #[test]
+    /// Verify stored name lookup returns the expected location when present.
     fn resolve_location_by_name_returns_matching_location() {
         let entries = vec![PathEntry {
             location: "/usr/local/bin".to_string(),
@@ -640,6 +692,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensure list formatting includes names only when distinct from location.
     fn format_list_entry_includes_name_when_different() {
         let entry = PathEntry {
             location: "/usr/local/bin".to_string(),
