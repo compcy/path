@@ -429,3 +429,85 @@ fn delete_fails_when_store_is_unreadable() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: failed to load entries"));
 }
+
+/// Adding `.` should use the canonical current directory in PATH output.
+#[test]
+fn add_dot_uses_canonical_path_in_output() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let canonical = fs::canonicalize(dir)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    let output = cmd
+        .arg("add")
+        .arg(".")
+        .arg("dot")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert_eq!(out_str.trim(), format!("export PATH='{}'", canonical));
+}
+
+/// Adding `.` when PATH already contains the canonical cwd should not duplicate it.
+#[test]
+fn add_dot_does_not_duplicate_existing_entry() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let canonical = fs::canonicalize(dir)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", &canonical);
+    let output = cmd
+        .arg("add")
+        .arg(".")
+        .arg("dot")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert_eq!(out_str.trim(), format!("export PATH='{}'", canonical));
+}
+
+/// Equivalent non-dot directory forms (e.g. trailing slash) should not duplicate PATH entries.
+#[test]
+fn add_does_not_duplicate_equivalent_directory() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let canonical = fs::canonicalize(dir)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+
+    let mut with_slash = canonical.clone();
+    with_slash.push('/');
+    let initial_path = format!("{}:/usr/bin", with_slash);
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", &initial_path);
+    let output = cmd
+        .arg("add")
+        .arg(".")
+        .arg("dot")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert_eq!(
+        out_str.trim(),
+        format!("export PATH='{}:/usr/bin'", with_slash)
+    );
+}
