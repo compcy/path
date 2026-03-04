@@ -2,7 +2,7 @@
 
 `path` is a simple command-line utility for inspecting and manipulating the
 `PATH` environment variable. It also keeps a local record of added entries in
-a plain-text `.path` file, with optional names and exclusivity flags.
+a plain-text `.path` file, with optional names and autoset flags.
 
 Because a child process cannot directly modify its parent shell environment,
 commands that compute PATH output a shell assignment like
@@ -40,6 +40,7 @@ path add /some/dir mydir
   - Path arguments are canonicalized for PATH output when possible (for example `.` becomes the absolute current directory).
   - If the path exists, it must be a directory (files are rejected).
   - If `name` is provided, it must be alphanumeric and unique.
+  - Use `--noauto` to store a named entry that should not be included by `path load`.
   - Only entries with an explicit `name` are written to `.path`.
   - Existing PATH entries are not duplicated.
 - `path add --pre <location-or-name> [name]` — prepend instead of append
@@ -51,6 +52,7 @@ path add /some/dir mydir
   - If the argument matches a stored short name, that entry is deleted.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation), and matching stored locations are deleted.
 - `path list` — show all saved entries from the `.path` file
+- `path load` — append all stored entries marked `auto` to PATH
 
 **Startup validation note:** when reading `.path`, the tool aborts if it finds:
 - a nameless entry,
@@ -64,11 +66,13 @@ Example:
 ```sh
 path add /usr/local/bin             # append only; not stored (no explicit name)
 path add /home/$USER/.bin home      # store with short name "home"
+path add /opt/internal/bin internal --noauto  # store but do not include in `path load`
 path add --pre /opt/custom/bin      # prepend to PATH instead of append
 path add home                        # uses stored name "home" if present
 path remove /home/$USER/.bin         # remove by path
 path remove home                     # remove from PATH by stored short name
 path delete home                     # delete stored entry from .path by name
+path load                            # add only entries marked auto
 
 # invalid unless "foo" is a stored name
 path add foo
@@ -79,8 +83,10 @@ path add .path
 
 Entries are persisted to a `.path` file in the current directory, but
 only for entries where you supplied an explicit name. Each line consists of
-`location<TAB>name<TAB>exclusivity?`. (Because a name is mandatory the tool
-will refuse to start if it finds a line missing that field.) The tool reads and writes this file
+`location<TAB>name<TAB>autoset?` where autoset is `auto` or `noauto`.
+If the third field is missing or blank, it is treated as `auto`. (Because a
+name is mandatory the tool will refuse to start if it finds a line missing
+that field.) The tool reads and writes this file
 automatically when adding.
 
 You can also install a release build and invoke it directly:

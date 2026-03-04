@@ -15,15 +15,16 @@ use std::path::Path;
 struct PathEntry {
     location: String,
     name: String,
-    exclusivity: Option<bool>,
+    autoset: bool,
     line_number: usize,
 }
 
 const STORE_FILE: &str = ".path";
 
-/// Parse a line from the store file.  Format is
-/// `<location>\t<name>\t<exclusivity?>` where exclusivity is `true` or
-/// `false` (absent means `None`).
+/// Parse a line from the store file.
+///
+/// Format is `<location>\t<name>\t<autoset?>` where autoset is `auto` or
+/// `noauto`. Missing or blank autoset values are treated as `auto`.
 fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
     // skip blank lines entirely
     if line.trim().is_empty() {
@@ -45,36 +46,34 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
         String::new()
     };
 
-    let exclusivity = if parts.len() == 3 {
+    let autoset = if parts.len() == 3 {
         match parts[2].trim() {
-            "true" => Some(true),
-            "false" => Some(false),
-            "" => None,
+            "auto" | "" => true,
+            "noauto" => false,
             other => {
                 // ignore malformed value
-                eprintln!("warning: invalid exclusivity value '{}', ignoring", other);
-                None
+                eprintln!(
+                    "warning: invalid autoset value '{}', defaulting to auto",
+                    other
+                );
+                true
             }
         }
     } else {
-        None
+        true
     };
     Some(PathEntry {
         location,
         name,
-        exclusivity,
+        autoset,
         line_number,
     })
 }
 
 /// Serialize an entry back into a line.
 fn format_entry_line(entry: &PathEntry) -> String {
-    let excl = match entry.exclusivity {
-        Some(true) => "true",
-        Some(false) => "false",
-        None => "",
-    };
-    format!("{}\t{}\t{}", entry.location, entry.name, excl)
+    let autoset = if entry.autoset { "auto" } else { "noauto" };
+    format!("{}\t{}\t{}", entry.location, entry.name, autoset)
 }
 
 /// Load entries from the STORE_FILE; if the file doesn't exist return an empty
@@ -213,9 +212,9 @@ fn build_cli() -> App<'static, 'static> {
                         .index(2),
                 )
                 .arg(
-                    Arg::with_name("exclusive")
-                        .long("exclusive")
-                        .help("Mark this entry as exclusive")
+                    Arg::with_name("noauto")
+                        .long("noauto")
+                        .help("Store this entry as not auto-loaded by 'path load'")
                         .takes_value(false),
                 )
                 .arg(
@@ -246,6 +245,9 @@ fn build_cli() -> App<'static, 'static> {
                 ),
         )
         .subcommand(SubCommand::with_name("list").about("List entries stored in the .path file"))
+        .subcommand(
+            SubCommand::with_name("load").about("Add all auto entries from the .path file to PATH"),
+        )
 }
 
 /// Resolve a user-provided token to a stored location when it matches a name.
@@ -390,11 +392,7 @@ fn handle_add(add_matches: &ArgMatches) {
     }
 
     let name_opt = add_matches.value_of("name").map(|value| value.to_string());
-    let exclusivity = if add_matches.is_present("exclusive") {
-        Some(true)
-    } else {
-        None
-    };
+    let autoset = !add_matches.is_present("noauto");
 
     if let Some(name) = name_opt {
         if !is_valid_name(&name) {
@@ -426,7 +424,7 @@ fn handle_add(add_matches: &ArgMatches) {
                 entries.push(PathEntry {
                     location: stored_location,
                     name,
-                    exclusivity,
+                    autoset,
                     line_number: 0,
                 });
 
@@ -553,6 +551,31 @@ fn handle_list() {
     }
 }
 
+/// Handle the `load` subcommand.
+///
+/// This appends all entries marked `auto` in `.path` to PATH, skipping
+/// directories that are already present (including canonical equivalents).
+fn handle_load() {
+    let entries = match load_entries() {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!("error: failed to load entries: {}", error);
+            std::process::exit(1);
+        }
+    };
+
+    let mut current = env::var("PATH").unwrap_or_default();
+    for entry in entries.into_iter().filter(|entry| entry.autoset) {
+        let env_location =
+            canonicalize_for_path_output(&entry.location).unwrap_or_else(|| entry.location.clone());
+        if !path_contains_equivalent_directory(&current, &env_location) {
+            current = compose_path(&current, &env_location, false);
+        }
+    }
+
+    println!("{}", format_export_path(&current));
+}
+
 /// Print the current PATH value as a shell export statement.
 fn print_current_path() {
     match env::var("PATH") {
@@ -592,6 +615,11 @@ fn main() {
         return;
     }
 
+    if matches.subcommand_matches("load").is_some() {
+        handle_load();
+        return;
+    }
+
     print_current_path();
 }
 
@@ -602,10 +630,10 @@ mod tests {
     #[test]
     /// Verify three-field lines are parsed into all struct fields.
     fn parse_entry_line_parses_three_fields() {
-        let entry = parse_entry_line("/tmp/tools\ttools\ttrue", 7).unwrap();
+        let entry = parse_entry_line("/tmp/tools\ttools\tnoauto", 7).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "tools");
-        assert_eq!(entry.exclusivity, Some(true));
+        assert!(!entry.autoset);
         assert_eq!(entry.line_number, 7);
     }
 
@@ -615,7 +643,7 @@ mod tests {
         let entry = parse_entry_line("/tmp/tools", 3).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "");
-        assert_eq!(entry.exclusivity, None);
+        assert!(entry.autoset);
     }
 
     #[test]
@@ -681,7 +709,7 @@ mod tests {
         let entries = vec![PathEntry {
             location: "/usr/local/bin".to_string(),
             name: "tools".to_string(),
-            exclusivity: None,
+            autoset: true,
             line_number: 1,
         }];
         assert_eq!(
@@ -697,7 +725,7 @@ mod tests {
         let entry = PathEntry {
             location: "/usr/local/bin".to_string(),
             name: "tools".to_string(),
-            exclusivity: None,
+            autoset: true,
             line_number: 0,
         };
         assert_eq!(format_list_entry(&entry), "/usr/local/bin (tools)");
@@ -705,9 +733,36 @@ mod tests {
         let same = PathEntry {
             location: "/usr/bin".to_string(),
             name: "/usr/bin".to_string(),
-            exclusivity: None,
+            autoset: true,
             line_number: 0,
         };
         assert_eq!(format_list_entry(&same), "/usr/bin");
+    }
+
+    #[test]
+    /// Ensure blank third fields are interpreted as `auto` for manual edits.
+    fn parse_entry_line_blank_third_field_defaults_to_auto() {
+        let entry = parse_entry_line("/tmp/tools\ttools\t", 2).unwrap();
+        assert!(entry.autoset);
+    }
+
+    #[test]
+    /// Ensure entry serialization writes explicit `auto` and `noauto` markers.
+    fn format_entry_line_writes_auto_markers() {
+        let auto = PathEntry {
+            location: "/tmp/a".to_string(),
+            name: "a".to_string(),
+            autoset: true,
+            line_number: 0,
+        };
+        assert_eq!(format_entry_line(&auto), "/tmp/a\ta\tauto");
+
+        let noauto = PathEntry {
+            location: "/tmp/b".to_string(),
+            name: "b".to_string(),
+            autoset: false,
+            line_number: 0,
+        };
+        assert_eq!(format_entry_line(&noauto), "/tmp/b\tb\tnoauto");
     }
 }

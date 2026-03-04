@@ -27,7 +27,7 @@ path() {
     fi
 
     case "${1:-}" in
-        add|remove)
+        add|remove|load)
             if [ -n "$_path_stdout" ]; then
                 eval "$_path_stdout"
             fi
