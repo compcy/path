@@ -318,6 +318,20 @@ fn enforce_path_format_for_add() {
     cmd2.assert().success();
 }
 
+/// Paths passed to `add` must not contain `:`.
+#[test]
+fn add_rejects_colon_in_path_argument() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    cmd.arg("add").arg("/tmp:evil");
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("must not contain ':'"));
+}
+
 /// Adding a path that refers to a regular file (not a directory) should fail.
 #[test]
 fn reject_file_locations() {
@@ -402,6 +416,20 @@ fn remove_by_path_matches_raw_segment_too() {
     assert_eq!(out_str.trim(), "export PATH='/usr/bin'");
 }
 
+/// Paths passed to `remove` must not contain `:`.
+#[test]
+fn remove_rejects_colon_in_path_argument() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    cmd.arg("remove").arg("/tmp:evil");
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("must not contain ':'"));
+}
+
 /// `list` should fail if the store cannot be loaded.
 #[test]
 fn list_fails_when_store_is_unreadable() {
@@ -428,6 +456,20 @@ fn delete_fails_when_store_is_unreadable() {
     let assert = cmd.arg("delete").arg("home").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: failed to load entries"));
+}
+
+/// Paths passed to `delete` must not contain `:`.
+#[test]
+fn delete_rejects_colon_in_path_argument() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    cmd.arg("delete").arg("/tmp:evil");
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("must not contain ':'"));
 }
 
 /// Adding `.` should use the canonical current directory in PATH output.
@@ -540,6 +582,21 @@ fn noncanonical_stored_location_causes_error() {
     let assert = cmd.arg("list").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: invalid stored location '/tmp/../tmp'"));
+}
+
+/// Stored locations containing `:` should be rejected during startup validation.
+#[test]
+fn stored_location_with_colon_causes_error() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "/tmp:evil\tbad\tauto\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    let assert = cmd.arg("list").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("error: invalid stored location '/tmp:evil'"));
 }
 
 /// Adding with `--noauto` should persist `noauto` in the third field.

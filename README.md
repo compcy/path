@@ -37,6 +37,7 @@ path add /some/dir mydir
 - `path add <location-or-name> [name]` — append to PATH.
   - If `<location-or-name>` matches a stored short name, that stored location is used.
   - Otherwise it must be an absolute path (`/…`) or dot-relative (`./…`, `../…`).
+  - Path arguments must not contain `:`.
   - Relative path arguments are canonicalized once (for example `.` becomes the absolute current directory).
   - Absolute path arguments are used as provided.
   - If the path exists, it must be a directory (files are rejected).
@@ -47,17 +48,18 @@ path add /some/dir mydir
 - `path add --pre <location-or-name> [name]` — prepend instead of append
 - `path remove <location-or-name>` — remove from PATH only
   - If the argument matches a stored short name, its location is removed from PATH.
-  - Otherwise the argument is treated as a path (same absolute/dot-relative validation).
+  - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`).
   - This command does not modify `.path`.
 - `path delete <location-or-name>` — delete from `.path` only
   - If the argument matches a stored short name, that entry is deleted.
-  - Otherwise the argument is treated as a path (same absolute/dot-relative validation), and matching stored locations are deleted.
+  - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`), and matching stored locations are deleted.
 - `path list` — show all saved entries from the `.path` file
 - `path load` — append all stored entries marked `auto` to PATH
 
 **Startup validation note:** when reading `.path`, the tool aborts if it finds:
 - a nameless entry,
 - a relative or non-canonical-looking stored location,
+- a stored location containing `:`,
 - a non-alphanumeric name,
 - duplicate names.
 

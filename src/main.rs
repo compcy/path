@@ -145,7 +145,7 @@ fn validate_entries() -> io::Result<()> {
         .find(|e| !is_store_location_canonical_like(&e.location))
     {
         eprintln!(
-            "error: invalid stored location '{}' at line {}: locations in {} must be absolute and canonical-looking",
+            "error: invalid stored location '{}' at line {}: locations in {} must be absolute, canonical-looking, and must not contain ':'",
             e.location, e.line_number, STORE_FILE
         );
         std::process::exit(1);
@@ -278,6 +278,11 @@ fn is_path_argument_valid(path: &str) -> bool {
     path.starts_with('/') || path.starts_with('.')
 }
 
+/// Return whether a path-like value contains a PATH segment separator.
+fn contains_path_separator(path: &str) -> bool {
+    path.contains(':')
+}
+
 /// Normalize a path into an absolute, canonical-looking string.
 ///
 /// This performs lexical normalization (removing `.` and resolving `..`)
@@ -332,6 +337,10 @@ fn is_store_location_canonical_like(location: &str) -> bool {
     }
 
     if location.contains("//") {
+        return false;
+    }
+
+    if contains_path_separator(location) {
         return false;
     }
 
@@ -424,6 +433,11 @@ fn handle_add(add_matches: &ArgMatches) {
         std::process::exit(1);
     }
 
+    if !resolved_by_name && contains_path_separator(&location) {
+        eprintln!("error: path '{}' must not contain ':'", location);
+        std::process::exit(1);
+    }
+
     if !resolved_by_name {
         location = canonicalize_relative_cli_argument(&location);
     }
@@ -461,7 +475,7 @@ fn handle_add(add_matches: &ArgMatches) {
 
                 if !is_store_location_canonical_like(&location) {
                     eprintln!(
-                        "error: cannot store location '{}': stored paths must be absolute and canonical-looking",
+                        "error: cannot store location '{}': stored paths must be absolute, canonical-looking, and must not contain ':'",
                         location
                     );
                     std::process::exit(1);
@@ -526,6 +540,11 @@ fn handle_remove(remove_matches: &ArgMatches) {
             std::process::exit(1);
         }
 
+        if contains_path_separator(&argument) {
+            eprintln!("error: path '{}' must not contain ':'", argument);
+            std::process::exit(1);
+        }
+
         location_to_remove = canonicalize_relative_cli_argument(&argument);
         raw_path_arg = Some(argument.as_str());
     }
@@ -563,6 +582,11 @@ fn handle_delete(delete_matches: &ArgMatches) {
                 "error: path '{}' must be absolute or start with '.'",
                 argument
             );
+            std::process::exit(1);
+        }
+
+        if contains_path_separator(&argument) {
+            eprintln!("error: path '{}' must not contain ':'", argument);
             std::process::exit(1);
         }
 
@@ -723,6 +747,7 @@ mod tests {
         assert!(is_store_location_canonical_like("/"));
 
         assert!(!is_store_location_canonical_like("./rel"));
+        assert!(!is_store_location_canonical_like("/usr:local/bin"));
         assert!(!is_store_location_canonical_like("/usr//local/bin"));
         assert!(!is_store_location_canonical_like("/usr/../local/bin"));
         assert!(!is_store_location_canonical_like("/usr/local/bin/"));
