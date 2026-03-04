@@ -23,32 +23,29 @@ const STORE_FILE: &str = ".path";
 
 /// Parse a line from the store file.
 ///
-/// Format is `<location>\t<name>\t<autoset?>` where autoset is `auto` or
-/// `noauto`. Missing or blank autoset values are treated as `auto`.
+/// Format is `<location> <name> <autoset?>` with fields separated by
+/// whitespace. `autoset` is `auto` or `noauto`; missing autoset values are
+/// treated as `auto`.
 fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
     // skip blank lines entirely
     if line.trim().is_empty() {
         return None;
     }
 
-    // split on tabs; a well-formed line has at least two fields (location
-    // and name).  In earlier versions we silently dropped lines lacking the
-    // second field, which meant a user could have a malformed `.path` file
-    // and our validation logic would never see it.  Instead we now treat the
-    // missing name case as an entry with an empty name so that
-    // `validate_entries` will catch it and abort.
-    let parts: Vec<&str> = line.splitn(3, '\t').collect();
+    // split on whitespace; a well-formed line has at least two fields (location
+    // and name).
+    let parts: Vec<&str> = line.split_whitespace().collect();
     let location = parts[0].to_string();
     let name = if parts.len() >= 2 {
         parts[1].to_string()
     } else {
-        // no tab found; this is effectively a nameless entry
+        // no name field found; this is effectively a nameless entry
         String::new()
     };
 
-    let autoset = if parts.len() == 3 {
-        match parts[2].trim() {
-            "auto" | "" => true,
+    let autoset = if parts.len() >= 3 {
+        match parts[2] {
+            "auto" => true,
             "noauto" => false,
             other => {
                 // ignore malformed value
@@ -73,7 +70,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
 /// Serialize an entry back into a line.
 fn format_entry_line(entry: &PathEntry) -> String {
     let autoset = if entry.autoset { "auto" } else { "noauto" };
-    format!("{}\t{}\t{}", entry.location, entry.name, autoset)
+    format!("{} {} {}", entry.location, entry.name, autoset)
 }
 
 /// Load entries from the STORE_FILE; if the file doesn't exist return an empty
@@ -699,8 +696,8 @@ mod tests {
     }
 
     #[test]
-    /// Verify lines without a tab become nameless entries for later validation.
-    fn parse_entry_line_without_tab_creates_nameless_entry() {
+    /// Verify lines without a name field become nameless entries for validation.
+    fn parse_entry_line_without_name_field_creates_nameless_entry() {
         let entry = parse_entry_line("/tmp/tools", 3).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "");
@@ -816,9 +813,9 @@ mod tests {
     }
 
     #[test]
-    /// Ensure blank third fields are interpreted as `auto` for manual edits.
-    fn parse_entry_line_blank_third_field_defaults_to_auto() {
-        let entry = parse_entry_line("/tmp/tools\ttools\t", 2).unwrap();
+    /// Ensure missing third fields are interpreted as `auto` for manual edits.
+    fn parse_entry_line_missing_third_field_defaults_to_auto() {
+        let entry = parse_entry_line("/tmp/tools tools", 2).unwrap();
         assert!(entry.autoset);
     }
 
@@ -831,7 +828,7 @@ mod tests {
             autoset: true,
             line_number: 0,
         };
-        assert_eq!(format_entry_line(&auto), "/tmp/a\ta\tauto");
+        assert_eq!(format_entry_line(&auto), "/tmp/a a auto");
 
         let noauto = PathEntry {
             location: "/tmp/b".to_string(),
@@ -839,6 +836,6 @@ mod tests {
             autoset: false,
             line_number: 0,
         };
-        assert_eq!(format_entry_line(&noauto), "/tmp/b\tb\tnoauto");
+        assert_eq!(format_entry_line(&noauto), "/tmp/b b noauto");
     }
 }

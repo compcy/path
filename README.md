@@ -87,10 +87,11 @@ path add .path
 
 Entries are persisted to a `.path` file in the current directory, but
 only for entries where you supplied an explicit name. Each line consists of
-`location<TAB>name<TAB>autoset?` where autoset is `auto` or `noauto`.
-If the third field is missing or blank, it is treated as `auto`. (Because a
-name is mandatory the tool will refuse to start if it finds a line missing
-that field.) The tool reads and writes this file
+`location name autoset?` with fields separated by whitespace, where autoset is
+`auto` or `noauto`.
+If the third field is missing, it is treated as `auto`. (Because a name is
+mandatory the tool will refuse to start if it finds a line missing that
+field.) The tool reads and writes this file
 automatically when adding.
 
 You can also install a release build and invoke it directly:

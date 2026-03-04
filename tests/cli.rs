@@ -68,7 +68,7 @@ fn add_with_name_and_prepend() {
 
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp/y\tyname"));
+    assert!(contents.contains("/tmp/y yname auto"));
 }
 
 /// After adding entries, `list` should print them in a readable form.
@@ -128,14 +128,14 @@ fn invalid_entries_are_warned_about() {
 }
 
 /// Entries without a name (either explicitly empty or because the line
-/// was malformed with no tab separator) cause the program to abort and
+/// was malformed with no field separator) cause the program to abort and
 /// report the offending line along with its line number.
 #[test]
 fn nameless_entry_causes_error() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    // one line has an empty name, the other is completely lacking the tab
+    // one line has an empty name, the other has no field separator
     fs::write(&store, "/some/path\t\n/foo/foo\n/foo\tfoo\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
@@ -143,7 +143,7 @@ fn nameless_entry_causes_error() {
     let assert = cmd.arg("list").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: found nameless entry"));
-    // should include the line number (line 1 has /some/path\t\n)
+    // should include the line number (line 1 has /some/path with no name)
     assert!(stderr.contains("at line 1"));
     // should include the location
     assert!(stderr.contains("/some/path") || stderr.contains("/foo/foo"));
@@ -177,7 +177,7 @@ fn duplicate_names_are_rejected() {
     // verify that only the first entry was stored
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp\tmyname"));
+    assert!(contents.contains("/tmp myname auto"));
     assert!(!contents.contains("/usr/local/bin"));
 }
 
@@ -391,7 +391,7 @@ fn delete_removes_store_entry_by_name() {
 
     let contents = fs::read_to_string(store).unwrap();
     assert!(!contents.contains("/tmp\thome"));
-    assert!(contents.contains("/usr/bin\tsys"));
+    assert!(contents.contains("/usr/bin sys auto"));
 }
 
 /// `remove` by path should match both canonicalized and raw PATH segments.
@@ -615,7 +615,7 @@ fn add_with_noauto_stores_noauto_marker() {
 
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp/noauto\tnoautoentry\tnoauto"));
+    assert!(contents.contains("/tmp/noauto noautoentry noauto"));
 }
 
 /// `load` should add only `auto` entries and skip `noauto` entries.
@@ -626,7 +626,7 @@ fn load_adds_only_auto_entries() {
     let store = dir.join(".path");
     fs::write(
         &store,
-        "/opt/auto1\ta1\tauto\n/opt/noauto\tn1\tnoauto\n/opt/auto2\ta2\tauto\n",
+        "/opt/auto1 a1 auto\n/opt/noauto n1 noauto\n/opt/auto2 a2 auto\n",
     )
     .unwrap();
 
@@ -644,6 +644,27 @@ fn load_adds_only_auto_entries() {
     assert!(out_str.contains("/opt/auto1"));
     assert!(out_str.contains("/opt/auto2"));
     assert!(!out_str.contains("/opt/noauto"));
+}
+
+/// `list` should parse manually edited `.path` lines separated by spaces.
+#[test]
+fn list_accepts_space_separated_entries() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "/opt/tools tools auto\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    let output = cmd
+        .arg("list")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert!(out_str.contains("/opt/tools (tools)"));
 }
 
 /// `load` should treat a blank third field as `auto` for manually edited files.
