@@ -40,11 +40,12 @@ path add /some/dir mydir
   - Path arguments must not contain `:`.
   - Relative path arguments are canonicalized once (for example `.` becomes the absolute current directory).
   - Absolute path arguments are used as provided.
+  - Trailing `/` is stripped from path arguments (except `/` itself).
   - If the path exists, it must be a directory (files are rejected).
   - If `name` is provided, it must be alphanumeric and unique.
   - Use `--noauto` to store a named entry that should not be included by `path load`.
   - Only entries with an explicit `name` are written to `.path`.
-  - Existing PATH entries are not duplicated when the segment string is an exact match.
+  - Existing PATH entries are not duplicated for equivalent trailing-slash forms (for example `/usr/local/bin` and `/usr/local/bin/`).
 - `path add --pre <location-or-name> [name]` — prepend instead of append
 - `path remove <location-or-name>` — remove from PATH only
   - If the argument matches a stored short name, its location is removed from PATH.
@@ -91,7 +92,8 @@ only for entries where you supplied an explicit name. Each line consists of
 `auto` or `noauto`.
 If the third field is missing, it is treated as `auto`. (Because a name is
 mandatory the tool will refuse to start if it finds a line missing that
-field.) The tool reads and writes this file
+field.) A trailing `/` on stored paths is normalized away while reading
+(except for `/`). The tool reads and writes this file
 automatically when adding.
 
 You can also install a release build and invoke it directly:

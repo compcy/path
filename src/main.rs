@@ -35,7 +35,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
     // split on whitespace; a well-formed line has at least two fields (location
     // and name).
     let parts: Vec<&str> = line.split_whitespace().collect();
-    let location = parts[0].to_string();
+    let location = strip_trailing_slash(parts[0]);
     let name = if parts.len() >= 2 {
         parts[1].to_string()
     } else {
@@ -275,6 +275,15 @@ fn is_path_argument_valid(path: &str) -> bool {
     path.starts_with('/') || path.starts_with('.')
 }
 
+/// Remove trailing `/` characters while preserving root (`/`).
+fn strip_trailing_slash(path: &str) -> String {
+    let mut normalized = path.to_string();
+    while normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+    normalized
+}
+
 /// Return whether a path-like value contains a PATH segment separator.
 fn contains_path_separator(path: &str) -> bool {
     path.contains(':')
@@ -311,11 +320,11 @@ fn normalize_absolute_path(path: &Path) -> String {
 /// Absolute arguments are returned unchanged.
 fn canonicalize_relative_cli_argument(path: &str) -> String {
     if path.starts_with('/') {
-        return path.to_string();
+        return strip_trailing_slash(path);
     }
 
     match env::current_dir() {
-        Ok(cwd) => normalize_absolute_path(&cwd.join(path)),
+        Ok(cwd) => strip_trailing_slash(&normalize_absolute_path(&cwd.join(path))),
         Err(_) => path.to_string(),
     }
 }
@@ -359,7 +368,10 @@ fn compose_path(current: &str, location: &str, prepend: bool) -> String {
 
 /// Check whether a PATH-like string already contains an exact segment match.
 fn path_contains_segment(current: &str, candidate: &str) -> bool {
-    current.split(':').any(|segment| segment == candidate)
+    let normalized_candidate = strip_trailing_slash(candidate);
+    current
+        .split(':')
+        .any(|segment| strip_trailing_slash(segment) == normalized_candidate)
 }
 
 /// Escape single quotes for safe embedding inside a single-quoted shell string.
@@ -377,12 +389,20 @@ fn format_export_path(path: &str) -> String {
 /// In addition to the resolved `location`, this may also remove the original
 /// raw argument form when provided.
 fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -> String {
+    let normalized_location = strip_trailing_slash(location);
+    let normalized_raw = raw_path_arg.map(strip_trailing_slash);
+
     current
         .split(':')
         .filter(|segment| {
-            *segment != location
+            let normalized_segment = strip_trailing_slash(segment);
+
+            normalized_segment != normalized_location
                 && match raw_path_arg {
-                    Some(raw) => *segment != raw,
+                    Some(_) => normalized_raw
+                        .as_ref()
+                        .map(|raw| normalized_segment != *raw)
+                        .unwrap_or(true),
                     None => true,
                 }
         })
@@ -688,7 +708,7 @@ mod tests {
     #[test]
     /// Verify three-field lines are parsed into all struct fields.
     fn parse_entry_line_parses_three_fields() {
-        let entry = parse_entry_line("/tmp/tools\ttools\tnoauto", 7).unwrap();
+        let entry = parse_entry_line("/tmp/tools/\ttools\tnoauto", 7).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "tools");
         assert!(!entry.autoset);
@@ -718,6 +738,7 @@ mod tests {
     fn path_contains_segment_matches_exact_entries() {
         assert!(path_contains_segment("/a:/b:/c", "/b"));
         assert!(!path_contains_segment("/a:/b:/c", "/d"));
+        assert!(path_contains_segment("/a:/b/:/c", "/b"));
     }
 
     #[test]
@@ -765,6 +786,7 @@ mod tests {
     fn remove_from_path_removes_exact_segments() {
         assert_eq!(remove_from_path("/a:/b:/c", "/b", None), "/a:/c");
         assert_eq!(remove_from_path("/a:/b:/a", "/a", None), "/b");
+        assert_eq!(remove_from_path("/a:/b/:/c", "/b", None), "/a:/c");
     }
 
     #[test]

@@ -522,9 +522,9 @@ fn add_dot_does_not_duplicate_existing_entry() {
     assert_eq!(out_str.trim(), format!("export PATH='{}'", canonical));
 }
 
-/// Deduplication is exact-string based, so non-identical path forms can coexist.
+/// Trailing slash variants are treated as equivalent and are not duplicated.
 #[test]
-fn add_allows_nonidentical_path_forms() {
+fn add_does_not_duplicate_trailing_slash_variant() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let canonical = fs::canonicalize(dir)
@@ -550,8 +550,30 @@ fn add_allows_nonidentical_path_forms() {
     let out_str = String::from_utf8_lossy(&output);
     assert_eq!(
         out_str.trim(),
-        format!("export PATH='{}:/usr/bin:{}'", with_slash, canonical)
+        format!("export PATH='{}:/usr/bin'", with_slash)
     );
+}
+
+/// Stored paths with trailing slashes should be normalized when read from file.
+#[test]
+fn list_normalizes_trailing_slash_from_store_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "/opt/tools/ tools auto\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    let output = cmd
+        .arg("list")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert!(out_str.contains("/opt/tools (tools)"));
+    assert!(!out_str.contains("/opt/tools/ (tools)"));
 }
 
 /// Stored relative locations should be rejected during startup validation.
