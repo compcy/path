@@ -8,7 +8,7 @@ use clap::{App, Arg, ArgMatches, SubCommand};
 use std::env;
 use std::fs;
 use std::io::{self, BufRead};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 /// Simple representation of a stored path entry in plain text form.
 #[derive(Debug, Clone)]
@@ -134,6 +134,19 @@ fn validate_entries() -> io::Result<()> {
         eprintln!(
             "error: found nameless entry in {} at line {}: '{}'",
             STORE_FILE, e.line_number, e.location
+        );
+        std::process::exit(1);
+    }
+
+    // Stored locations must be absolute and canonical-looking so command
+    // handlers can avoid repeated canonicalization.
+    if let Some(e) = entries
+        .iter()
+        .find(|e| !is_store_location_canonical_like(&e.location))
+    {
+        eprintln!(
+            "error: invalid stored location '{}' at line {}: locations in {} must be absolute and canonical-looking",
+            e.location, e.line_number, STORE_FILE
         );
         std::process::exit(1);
     }
@@ -265,6 +278,68 @@ fn is_path_argument_valid(path: &str) -> bool {
     path.starts_with('/') || path.starts_with('.')
 }
 
+/// Normalize a path into an absolute, canonical-looking string.
+///
+/// This performs lexical normalization (removing `.` and resolving `..`)
+/// without requiring the path to exist.
+fn normalize_absolute_path(path: &Path) -> String {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir => normalized.push("/"),
+            Component::Normal(segment) => normalized.push(segment),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Prefix(_) => {}
+        }
+    }
+
+    let normalized_str = normalized.to_string_lossy().into_owned();
+    if normalized_str.is_empty() {
+        "/".to_string()
+    } else {
+        normalized_str
+    }
+}
+
+/// Canonicalize CLI path arguments only when they are relative.
+///
+/// Absolute arguments are returned unchanged.
+fn canonicalize_relative_cli_argument(path: &str) -> String {
+    if path.starts_with('/') {
+        return path.to_string();
+    }
+
+    match env::current_dir() {
+        Ok(cwd) => normalize_absolute_path(&cwd.join(path)),
+        Err(_) => path.to_string(),
+    }
+}
+
+/// Return whether a stored location is absolute and canonical-looking.
+///
+/// Canonical-looking means it is absolute, contains no `.`/`..` components,
+/// has no duplicate separators, and has no trailing slash (except `/`).
+fn is_store_location_canonical_like(location: &str) -> bool {
+    if !location.starts_with('/') {
+        return false;
+    }
+
+    if location != "/" && location.ends_with('/') {
+        return false;
+    }
+
+    if location.contains("//") {
+        return false;
+    }
+
+    Path::new(location)
+        .components()
+        .all(|component| matches!(component, Component::RootDir | Component::Normal(_)))
+}
+
 /// Compose a new PATH string by prepending or appending a location.
 fn compose_path(current: &str, location: &str, prepend: bool) -> String {
     if current.is_empty() {
@@ -281,36 +356,6 @@ fn path_contains_segment(current: &str, candidate: &str) -> bool {
     current.split(':').any(|segment| segment == candidate)
 }
 
-/// Canonicalize a location for comparison or output in PATH updates.
-///
-/// Returns `None` when canonicalization fails.
-fn canonicalize_for_path_output(location: &str) -> Option<String> {
-    fs::canonicalize(location)
-        .ok()
-        .map(|path| path.to_string_lossy().into_owned())
-}
-
-/// Determine whether PATH already contains a directory equivalent to `candidate`.
-///
-/// This checks both exact string matches and canonicalized filesystem
-/// equivalence to avoid duplicate entries that differ only syntactically.
-fn path_contains_equivalent_directory(current: &str, candidate: &str) -> bool {
-    if path_contains_segment(current, candidate) {
-        return true;
-    }
-
-    let candidate_canonical = match canonicalize_for_path_output(candidate) {
-        Some(path) => path,
-        None => return false,
-    };
-
-    current.split(':').any(|segment| {
-        canonicalize_for_path_output(segment)
-            .map(|canonical| canonical == candidate_canonical)
-            .unwrap_or(false)
-    })
-}
-
 /// Escape single quotes for safe embedding inside a single-quoted shell string.
 fn quote_for_shell_single(s: &str) -> String {
     s.replace('\'', "'\\''")
@@ -323,7 +368,7 @@ fn format_export_path(path: &str) -> String {
 
 /// Remove matching path segments from a PATH-like string.
 ///
-/// In addition to the canonical `location`, this may also remove the original
+/// In addition to the resolved `location`, this may also remove the original
 /// raw argument form when provided.
 fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -> String {
     current
@@ -379,6 +424,10 @@ fn handle_add(add_matches: &ArgMatches) {
         std::process::exit(1);
     }
 
+    if !resolved_by_name {
+        location = canonicalize_relative_cli_argument(&location);
+    }
+
     if Path::new(&location).exists() {
         match fs::metadata(&location) {
             Ok(meta) if !meta.is_dir() => {
@@ -410,19 +459,16 @@ fn handle_add(add_matches: &ArgMatches) {
                     std::process::exit(1);
                 }
 
-                let stored_location = match fs::canonicalize(&location) {
-                    Ok(path) => path.to_string_lossy().into_owned(),
-                    Err(_) => {
-                        eprintln!(
-                            "warning: could not canonicalize path '{}', storing as-is",
-                            location
-                        );
-                        location.clone()
-                    }
-                };
+                if !is_store_location_canonical_like(&location) {
+                    eprintln!(
+                        "error: cannot store location '{}': stored paths must be absolute and canonical-looking",
+                        location
+                    );
+                    std::process::exit(1);
+                }
 
                 entries.push(PathEntry {
-                    location: stored_location,
+                    location: location.clone(),
                     name,
                     autoset,
                     line_number: 0,
@@ -441,14 +487,13 @@ fn handle_add(add_matches: &ArgMatches) {
         }
     }
 
-    let env_location = canonicalize_for_path_output(&location).unwrap_or_else(|| location.clone());
     let prepend = add_matches.is_present("pre");
     let current = env::var("PATH").unwrap_or_default();
 
-    let should_add = !path_contains_equivalent_directory(&current, &env_location);
+    let should_add = !path_contains_segment(&current, &location);
 
     let updated = if should_add {
-        compose_path(&current, &env_location, prepend)
+        compose_path(&current, &location, prepend)
     } else {
         current
     };
@@ -481,10 +526,7 @@ fn handle_remove(remove_matches: &ArgMatches) {
             std::process::exit(1);
         }
 
-        location_to_remove = match fs::canonicalize(&argument) {
-            Ok(path) => path.to_string_lossy().into_owned(),
-            Err(_) => argument.clone(),
-        };
+        location_to_remove = canonicalize_relative_cli_argument(&argument);
         raw_path_arg = Some(argument.as_str());
     }
 
@@ -524,10 +566,7 @@ fn handle_delete(delete_matches: &ArgMatches) {
             std::process::exit(1);
         }
 
-        let location_to_delete = match fs::canonicalize(&argument) {
-            Ok(path) => path.to_string_lossy().into_owned(),
-            Err(_) => argument.clone(),
-        };
+        let location_to_delete = canonicalize_relative_cli_argument(&argument);
         entries.retain(|entry| entry.location != location_to_delete);
     }
 
@@ -554,7 +593,7 @@ fn handle_list() {
 /// Handle the `load` subcommand.
 ///
 /// This appends all entries marked `auto` in `.path` to PATH, skipping
-/// directories that are already present (including canonical equivalents).
+/// entries already present as exact path segments.
 fn handle_load() {
     let entries = match load_entries() {
         Ok(entries) => entries,
@@ -566,10 +605,8 @@ fn handle_load() {
 
     let mut current = env::var("PATH").unwrap_or_default();
     for entry in entries.into_iter().filter(|entry| entry.autoset) {
-        let env_location =
-            canonicalize_for_path_output(&entry.location).unwrap_or_else(|| entry.location.clone());
-        if !path_contains_equivalent_directory(&current, &env_location) {
-            current = compose_path(&current, &env_location, false);
+        if !path_contains_segment(&current, &entry.location) {
+            current = compose_path(&current, &entry.location, false);
         }
     }
 
@@ -663,18 +700,32 @@ mod tests {
     }
 
     #[test]
-    /// Confirm canonical-equivalent directories are treated as already present.
-    fn path_contains_equivalent_directory_matches_canonical_equivalent() {
+    /// Ensure relative CLI paths are canonicalized once into absolute form.
+    fn canonicalize_relative_cli_argument_resolves_dot() {
+        let canonical = canonicalize_relative_cli_argument(".");
         let cwd = env::current_dir().unwrap().to_string_lossy().into_owned();
-        assert!(path_contains_equivalent_directory(".:/usr/bin", &cwd));
+        assert_eq!(canonical, cwd);
     }
 
     #[test]
-    /// Ensure canonicalization resolves `.` to the current working directory.
-    fn canonicalize_for_path_output_resolves_dot() {
-        let canonical = canonicalize_for_path_output(".").unwrap();
-        let cwd = env::current_dir().unwrap().to_string_lossy().into_owned();
-        assert_eq!(canonical, cwd);
+    /// Ensure absolute CLI paths are preserved as-is.
+    fn canonicalize_relative_cli_argument_keeps_absolute() {
+        assert_eq!(
+            canonicalize_relative_cli_argument("/usr/local/bin"),
+            "/usr/local/bin"
+        );
+    }
+
+    #[test]
+    /// Ensure canonical-looking validation rejects relative and non-normalized paths.
+    fn is_store_location_canonical_like_validates_shape() {
+        assert!(is_store_location_canonical_like("/usr/local/bin"));
+        assert!(is_store_location_canonical_like("/"));
+
+        assert!(!is_store_location_canonical_like("./rel"));
+        assert!(!is_store_location_canonical_like("/usr//local/bin"));
+        assert!(!is_store_location_canonical_like("/usr/../local/bin"));
+        assert!(!is_store_location_canonical_like("/usr/local/bin/"));
     }
 
     #[test]

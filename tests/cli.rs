@@ -480,9 +480,9 @@ fn add_dot_does_not_duplicate_existing_entry() {
     assert_eq!(out_str.trim(), format!("export PATH='{}'", canonical));
 }
 
-/// Equivalent non-dot directory forms (e.g. trailing slash) should not duplicate PATH entries.
+/// Deduplication is exact-string based, so non-identical path forms can coexist.
 #[test]
-fn add_does_not_duplicate_equivalent_directory() {
+fn add_allows_nonidentical_path_forms() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let canonical = fs::canonicalize(dir)
@@ -508,8 +508,38 @@ fn add_does_not_duplicate_equivalent_directory() {
     let out_str = String::from_utf8_lossy(&output);
     assert_eq!(
         out_str.trim(),
-        format!("export PATH='{}:/usr/bin'", with_slash)
+        format!("export PATH='{}:/usr/bin:{}'", with_slash, canonical)
     );
+}
+
+/// Stored relative locations should be rejected during startup validation.
+#[test]
+fn relative_stored_location_causes_error() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "./rel\trel\tauto\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    let assert = cmd.arg("list").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("error: invalid stored location './rel'"));
+}
+
+/// Stored absolute paths containing parent traversal should be rejected.
+#[test]
+fn noncanonical_stored_location_causes_error() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "/tmp/../tmp\tbad\tauto\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(&dir).env("PATH", "");
+    let assert = cmd.arg("list").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("error: invalid stored location '/tmp/../tmp'"));
 }
 
 /// Adding with `--noauto` should persist `noauto` in the third field.
