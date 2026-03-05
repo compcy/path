@@ -37,6 +37,7 @@ path add /some/dir mydir
 - `path add <location-or-name> [name]` — append to PATH.
   - If `<location-or-name>` matches a stored short name, that stored location is used.
   - Otherwise it must be an absolute path (`/…`) or dot-relative (`./…`, `../…`).
+  - Quote path arguments that contain spaces (for example `"./my tools"`).
   - Path arguments must not contain `:`.
   - Relative path arguments are canonicalized once (for example `.` becomes the absolute current directory).
   - Absolute path arguments are used as provided.
@@ -71,6 +72,7 @@ Example:
 ```sh
 path add /usr/local/bin             # append only; not stored (no explicit name)
 path add /home/$USER/.bin home      # store with short name "home"
+path add "./my tools" mytools       # path contains a space
 path add /opt/internal/bin internal --noauto  # store but do not include in `path load`
 path add --pre /opt/custom/bin      # prepend to PATH instead of append
 path add home                        # uses stored name "home" if present
@@ -87,7 +89,7 @@ path add .path
 ```
 
 Entries are persisted to a `.path` file in the current directory, but
-only for entries where you supplied an explicit name. Each line consists of
+only for entries where you supplied an explicit name. New lines are written as
 `location name autoset?` with fields separated by whitespace, where autoset is
 `auto` or `noauto`.
 If the third field is missing, it is treated as `auto`. (Because a name is
@@ -95,6 +97,13 @@ mandatory the tool will refuse to start if it finds a line missing that
 field.) A trailing `/` on stored paths is normalized away while reading
 (except for `/`). The tool reads and writes this file
 automatically when adding.
+
+When a stored location contains whitespace (or `\`), it is escaped with `\`
+so the file remains whitespace-delimited. For example:
+
+```text
+/opt/my\ tools tools auto
+```
 
 You can also install a release build and invoke it directly:
 

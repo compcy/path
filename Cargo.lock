@@ -291,6 +291,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "predicates 2.1.5",
+ "regex",
  "tempfile",
 ]
 

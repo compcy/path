@@ -5,10 +5,12 @@
 #![deny(warnings)]
 
 use clap::{App, Arg, ArgMatches, SubCommand};
+use regex::Regex;
 use std::env;
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Simple representation of a stored path entry in plain text form.
 #[derive(Debug, Clone)]
@@ -23,54 +25,141 @@ const STORE_FILE: &str = ".path";
 
 /// Parse a line from the store file.
 ///
-/// Format is `<location> <name> <autoset?>` with fields separated by
-/// whitespace. `autoset` is `auto` or `noauto`; missing autoset values are
+/// Preferred format is `<location> <name> <autoset?>` with fields separated by
+/// whitespace. To preserve embedded whitespace within fields, any whitespace
+/// and `\\` characters are escaped with `\\` (for example `/tmp/my\ tools`).
+///
+/// `autoset` is `auto` or `noauto`; missing or blank autoset values are
 /// treated as `auto`.
+fn parse_autoset_value(value: &str) -> bool {
+    match value {
+        "" | "auto" => true,
+        "noauto" => false,
+        other => {
+            eprintln!(
+                "warning: invalid autoset value '{}', defaulting to auto",
+                other
+            );
+            true
+        }
+    }
+}
+
+/// Split a whitespace-delimited line while honoring backslash escapes.
+fn store_field_regex() -> &'static Regex {
+    static FIELD_RE: OnceLock<Regex> = OnceLock::new();
+    FIELD_RE.get_or_init(|| {
+        Regex::new(r"(?:\\.|[^\s\\]|\\)+").expect("store field regex should be valid")
+    })
+}
+
+/// Decode backslash escapes in a single store field.
+fn unescape_store_field(field: &str) -> String {
+    let mut decoded = String::with_capacity(field.len());
+    let mut escaped = false;
+
+    for character in field.chars() {
+        if escaped {
+            decoded.push(character);
+            escaped = false;
+            continue;
+        }
+
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+
+        decoded.push(character);
+    }
+
+    if escaped {
+        // Preserve a trailing backslash as a literal character.
+        decoded.push('\\');
+    }
+
+    decoded
+}
+
+/// Split a whitespace-delimited line into escaped fields using a regex tokenizer.
+fn split_escaped_whitespace_fields(line: &str) -> Vec<String> {
+    store_field_regex()
+        .find_iter(line)
+        .map(|m| unescape_store_field(m.as_str()))
+        .collect()
+}
+
+/// Escape store fields so they can be written as whitespace-delimited tokens.
+fn escape_store_field(field: &str) -> String {
+    let mut escaped = String::with_capacity(field.len());
+    for character in field.chars() {
+        if character == '\\' || character.is_whitespace() {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
 fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
     // skip blank lines entirely
     if line.trim().is_empty() {
         return None;
     }
 
-    // split on whitespace; a well-formed line has at least two fields (location
-    // and name).
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    let location = strip_trailing_slash(parts[0]);
-    let name = if parts.len() >= 2 {
-        parts[1].to_string()
-    } else {
-        // no name field found; this is effectively a nameless entry
-        String::new()
-    };
+    let parts = split_escaped_whitespace_fields(line);
 
-    let autoset = if parts.len() >= 3 {
-        match parts[2] {
-            "auto" => true,
-            "noauto" => false,
-            other => {
-                // ignore malformed value
-                eprintln!(
-                    "warning: invalid autoset value '{}', defaulting to auto",
-                    other
-                );
-                true
+    let entry = match parts.as_slice() {
+        [location, name] => PathEntry {
+            location: strip_trailing_slash(location),
+            name: name.clone(),
+            autoset: true,
+            line_number,
+        },
+        [location, name, autoset] => PathEntry {
+            location: strip_trailing_slash(location),
+            name: name.clone(),
+            autoset: parse_autoset_value(autoset),
+            line_number,
+        },
+        [location] => {
+            eprintln!(
+                "warning: malformed entry at line {}: missing required name field",
+                line_number
+            );
+            PathEntry {
+                location: strip_trailing_slash(location),
+                name: String::new(),
+                autoset: true,
+                line_number,
             }
         }
-    } else {
-        true
+        _ => {
+            eprintln!(
+                "warning: malformed entry at line {}: expected 2-3 fields; escape spaces as '\\ '",
+                line_number
+            );
+            PathEntry {
+                location: strip_trailing_slash(line.trim()),
+                name: String::new(),
+                autoset: true,
+                line_number,
+            }
+        }
     };
-    Some(PathEntry {
-        location,
-        name,
-        autoset,
-        line_number,
-    })
+
+    Some(entry)
 }
 
 /// Serialize an entry back into a line.
 fn format_entry_line(entry: &PathEntry) -> String {
     let autoset = if entry.autoset { "auto" } else { "noauto" };
-    format!("{} {} {}", entry.location, entry.name, autoset)
+    format!(
+        "{} {} {}",
+        escape_store_field(&entry.location),
+        entry.name,
+        autoset
+    )
 }
 
 /// Load entries from the STORE_FILE; if the file doesn't exist return an empty
@@ -708,11 +797,20 @@ mod tests {
     #[test]
     /// Verify three-field lines are parsed into all struct fields.
     fn parse_entry_line_parses_three_fields() {
-        let entry = parse_entry_line("/tmp/tools/\ttools\tnoauto", 7).unwrap();
+        let entry = parse_entry_line("/tmp/tools/ tools noauto", 7).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "tools");
         assert!(!entry.autoset);
         assert_eq!(entry.line_number, 7);
+    }
+
+    #[test]
+    /// Ensure older tab-delimited lines are still supported.
+    fn parse_entry_line_legacy_tab_delimited_still_parses() {
+        let entry = parse_entry_line("/tmp/tools\ttools\tnoauto", 8).unwrap();
+        assert_eq!(entry.location, "/tmp/tools");
+        assert_eq!(entry.name, "tools");
+        assert!(!entry.autoset);
     }
 
     #[test]
@@ -842,6 +940,31 @@ mod tests {
     }
 
     #[test]
+    /// Ensure escaped whitespace format preserves spaces in stored locations.
+    fn parse_entry_line_escaped_whitespace_preserves_spaces_in_location() {
+        let entry = parse_entry_line("/tmp/my\\ tools tools auto", 4).unwrap();
+        assert_eq!(entry.location, "/tmp/my tools");
+        assert_eq!(entry.name, "tools");
+        assert!(entry.autoset);
+    }
+
+    #[test]
+    /// Ensure escaped backslashes are decoded from store lines.
+    fn parse_entry_line_decodes_escaped_backslash() {
+        let entry = parse_entry_line("/tmp/my\\\\tools tools auto", 4).unwrap();
+        assert_eq!(entry.location, "/tmp/my\\tools");
+    }
+
+    #[test]
+    /// Ensure unescaped spaces create a malformed nameless entry.
+    fn parse_entry_line_unescaped_spaced_location_is_malformed() {
+        let entry = parse_entry_line("/tmp/my tools tools auto", 5).unwrap();
+        assert_eq!(entry.location, "/tmp/my tools tools auto");
+        assert_eq!(entry.name, "");
+        assert!(entry.autoset);
+    }
+
+    #[test]
     /// Ensure entry serialization writes explicit `auto` and `noauto` markers.
     fn format_entry_line_writes_auto_markers() {
         let auto = PathEntry {
@@ -859,5 +982,25 @@ mod tests {
             line_number: 0,
         };
         assert_eq!(format_entry_line(&noauto), "/tmp/b b noauto");
+    }
+
+    #[test]
+    /// Ensure serializer escapes whitespace and backslashes in fields.
+    fn format_entry_line_escapes_location_whitespace() {
+        let spaced = PathEntry {
+            location: "/tmp/my tools".to_string(),
+            name: "tools".to_string(),
+            autoset: true,
+            line_number: 0,
+        };
+        assert_eq!(format_entry_line(&spaced), "/tmp/my\\ tools tools auto");
+
+        let backslash = PathEntry {
+            location: "/tmp/my\\tools".to_string(),
+            name: "tools".to_string(),
+            autoset: true,
+            line_number: 0,
+        };
+        assert_eq!(format_entry_line(&backslash), "/tmp/my\\\\tools tools auto");
     }
 }
