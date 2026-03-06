@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 clap = "^2.33"  # Command line argument parser
+regex = "1"
 
 [dev-dependencies]
 assert_cmd = "2.0"

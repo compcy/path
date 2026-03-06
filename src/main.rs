@@ -5,10 +5,12 @@
 #![deny(warnings)]
 
 use clap::{App, Arg, ArgMatches, SubCommand};
+use regex::Regex;
 use std::env;
 use std::fs;
 use std::io::{self, BufRead};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Simple representation of a stored path entry in plain text form.
 #[derive(Debug, Clone)]
@@ -23,57 +25,141 @@ const STORE_FILE: &str = ".path";
 
 /// Parse a line from the store file.
 ///
-/// Format is `<location>\t<name>\t<autoset?>` where autoset is `auto` or
-/// `noauto`. Missing or blank autoset values are treated as `auto`.
+/// Preferred format is `<location> <name> <autoset?>` with fields separated by
+/// whitespace. To preserve embedded whitespace within fields, any whitespace
+/// and `\\` characters are escaped with `\\` (for example `/tmp/my\ tools`).
+///
+/// `autoset` is `auto` or `noauto`; missing or blank autoset values are
+/// treated as `auto`.
+fn parse_autoset_value(value: &str) -> bool {
+    match value {
+        "" | "auto" => true,
+        "noauto" => false,
+        other => {
+            eprintln!(
+                "warning: invalid autoset value '{}', defaulting to auto",
+                other
+            );
+            true
+        }
+    }
+}
+
+/// Split a whitespace-delimited line while honoring backslash escapes.
+fn store_field_regex() -> &'static Regex {
+    static FIELD_RE: OnceLock<Regex> = OnceLock::new();
+    FIELD_RE.get_or_init(|| {
+        Regex::new(r"(?:\\.|[^\s\\]|\\)+").expect("store field regex should be valid")
+    })
+}
+
+/// Decode backslash escapes in a single store field.
+fn unescape_store_field(field: &str) -> String {
+    let mut decoded = String::with_capacity(field.len());
+    let mut escaped = false;
+
+    for character in field.chars() {
+        if escaped {
+            decoded.push(character);
+            escaped = false;
+            continue;
+        }
+
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+
+        decoded.push(character);
+    }
+
+    if escaped {
+        // Preserve a trailing backslash as a literal character.
+        decoded.push('\\');
+    }
+
+    decoded
+}
+
+/// Split a whitespace-delimited line into escaped fields using a regex tokenizer.
+fn split_escaped_whitespace_fields(line: &str) -> Vec<String> {
+    store_field_regex()
+        .find_iter(line)
+        .map(|m| unescape_store_field(m.as_str()))
+        .collect()
+}
+
+/// Escape store fields so they can be written as whitespace-delimited tokens.
+fn escape_store_field(field: &str) -> String {
+    let mut escaped = String::with_capacity(field.len());
+    for character in field.chars() {
+        if character == '\\' || character.is_whitespace() {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
 fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
     // skip blank lines entirely
     if line.trim().is_empty() {
         return None;
     }
 
-    // split on tabs; a well-formed line has at least two fields (location
-    // and name).  In earlier versions we silently dropped lines lacking the
-    // second field, which meant a user could have a malformed `.path` file
-    // and our validation logic would never see it.  Instead we now treat the
-    // missing name case as an entry with an empty name so that
-    // `validate_entries` will catch it and abort.
-    let parts: Vec<&str> = line.splitn(3, '\t').collect();
-    let location = parts[0].to_string();
-    let name = if parts.len() >= 2 {
-        parts[1].to_string()
-    } else {
-        // no tab found; this is effectively a nameless entry
-        String::new()
-    };
+    let parts = split_escaped_whitespace_fields(line);
 
-    let autoset = if parts.len() == 3 {
-        match parts[2].trim() {
-            "auto" | "" => true,
-            "noauto" => false,
-            other => {
-                // ignore malformed value
-                eprintln!(
-                    "warning: invalid autoset value '{}', defaulting to auto",
-                    other
-                );
-                true
+    let entry = match parts.as_slice() {
+        [location, name] => PathEntry {
+            location: strip_trailing_slash(location),
+            name: name.clone(),
+            autoset: true,
+            line_number,
+        },
+        [location, name, autoset] => PathEntry {
+            location: strip_trailing_slash(location),
+            name: name.clone(),
+            autoset: parse_autoset_value(autoset),
+            line_number,
+        },
+        [location] => {
+            eprintln!(
+                "warning: malformed entry at line {}: missing required name field",
+                line_number
+            );
+            PathEntry {
+                location: strip_trailing_slash(location),
+                name: String::new(),
+                autoset: true,
+                line_number,
             }
         }
-    } else {
-        true
+        _ => {
+            eprintln!(
+                "warning: malformed entry at line {}: expected 2-3 fields; escape spaces as '\\ '",
+                line_number
+            );
+            PathEntry {
+                location: strip_trailing_slash(line.trim()),
+                name: String::new(),
+                autoset: true,
+                line_number,
+            }
+        }
     };
-    Some(PathEntry {
-        location,
-        name,
-        autoset,
-        line_number,
-    })
+
+    Some(entry)
 }
 
 /// Serialize an entry back into a line.
 fn format_entry_line(entry: &PathEntry) -> String {
     let autoset = if entry.autoset { "auto" } else { "noauto" };
-    format!("{}\t{}\t{}", entry.location, entry.name, autoset)
+    format!(
+        "{} {} {}",
+        escape_store_field(&entry.location),
+        entry.name,
+        autoset
+    )
 }
 
 /// Load entries from the STORE_FILE; if the file doesn't exist return an empty
@@ -134,6 +220,19 @@ fn validate_entries() -> io::Result<()> {
         eprintln!(
             "error: found nameless entry in {} at line {}: '{}'",
             STORE_FILE, e.line_number, e.location
+        );
+        std::process::exit(1);
+    }
+
+    // Stored locations must be absolute and canonical-looking so command
+    // handlers can avoid repeated canonicalization.
+    if let Some(e) = entries
+        .iter()
+        .find(|e| !is_store_location_canonical_like(&e.location))
+    {
+        eprintln!(
+            "error: invalid stored location '{}' at line {}: locations in {} must be absolute, canonical-looking, and must not contain ':'",
+            e.location, e.line_number, STORE_FILE
         );
         std::process::exit(1);
     }
@@ -265,6 +364,96 @@ fn is_path_argument_valid(path: &str) -> bool {
     path.starts_with('/') || path.starts_with('.')
 }
 
+/// Remove trailing `/` characters while preserving root (`/`).
+fn strip_trailing_slash(path: &str) -> String {
+    let mut normalized = path.to_string();
+    while normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+    normalized
+}
+
+/// Return whether a path-like value contains a PATH segment separator.
+fn contains_path_separator(path: &str) -> bool {
+    path.contains(':')
+}
+
+/// Normalize a path into an absolute, canonical-looking string.
+///
+/// This performs lexical normalization (removing `.` and resolving `..`)
+/// without requiring the path to exist.
+fn normalize_absolute_path(path: &Path) -> String {
+    let mut normalized = PathBuf::new();
+    // Track depth of Normal components so we never pop past the root.
+    let mut depth: usize = 0;
+    for component in path.components() {
+        match component {
+            Component::RootDir => normalized.push("/"),
+            Component::Normal(segment) => {
+                normalized.push(segment);
+                depth += 1;
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // Clamp at root: only pop a Normal segment, never the RootDir,
+                // so an absolute input like `/a/../../x` yields `/x` not `x`.
+                if depth > 0 {
+                    normalized.pop();
+                    depth -= 1;
+                }
+            }
+            Component::Prefix(_) => {}
+        }
+    }
+
+    let normalized_str = normalized.to_string_lossy().into_owned();
+    if normalized_str.is_empty() {
+        "/".to_string()
+    } else {
+        normalized_str
+    }
+}
+
+/// Canonicalize CLI path arguments only when they are relative.
+///
+/// Absolute arguments are returned unchanged.
+fn canonicalize_relative_cli_argument(path: &str) -> String {
+    if path.starts_with('/') {
+        return strip_trailing_slash(path);
+    }
+
+    match env::current_dir() {
+        Ok(cwd) => strip_trailing_slash(&normalize_absolute_path(&cwd.join(path))),
+        Err(_) => path.to_string(),
+    }
+}
+
+/// Return whether a stored location is absolute and canonical-looking.
+///
+/// Canonical-looking means it is absolute, contains no `.`/`..` components,
+/// has no duplicate separators, and has no trailing slash (except `/`).
+fn is_store_location_canonical_like(location: &str) -> bool {
+    if !location.starts_with('/') {
+        return false;
+    }
+
+    if location != "/" && location.ends_with('/') {
+        return false;
+    }
+
+    if location.contains("//") {
+        return false;
+    }
+
+    if contains_path_separator(location) {
+        return false;
+    }
+
+    Path::new(location)
+        .components()
+        .all(|component| matches!(component, Component::RootDir | Component::Normal(_)))
+}
+
 /// Compose a new PATH string by prepending or appending a location.
 fn compose_path(current: &str, location: &str, prepend: bool) -> String {
     if current.is_empty() {
@@ -278,37 +467,10 @@ fn compose_path(current: &str, location: &str, prepend: bool) -> String {
 
 /// Check whether a PATH-like string already contains an exact segment match.
 fn path_contains_segment(current: &str, candidate: &str) -> bool {
-    current.split(':').any(|segment| segment == candidate)
-}
-
-/// Canonicalize a location for comparison or output in PATH updates.
-///
-/// Returns `None` when canonicalization fails.
-fn canonicalize_for_path_output(location: &str) -> Option<String> {
-    fs::canonicalize(location)
-        .ok()
-        .map(|path| path.to_string_lossy().into_owned())
-}
-
-/// Determine whether PATH already contains a directory equivalent to `candidate`.
-///
-/// This checks both exact string matches and canonicalized filesystem
-/// equivalence to avoid duplicate entries that differ only syntactically.
-fn path_contains_equivalent_directory(current: &str, candidate: &str) -> bool {
-    if path_contains_segment(current, candidate) {
-        return true;
-    }
-
-    let candidate_canonical = match canonicalize_for_path_output(candidate) {
-        Some(path) => path,
-        None => return false,
-    };
-
-    current.split(':').any(|segment| {
-        canonicalize_for_path_output(segment)
-            .map(|canonical| canonical == candidate_canonical)
-            .unwrap_or(false)
-    })
+    let normalized_candidate = strip_trailing_slash(candidate);
+    current
+        .split(':')
+        .any(|segment| strip_trailing_slash(segment) == normalized_candidate)
 }
 
 /// Escape single quotes for safe embedding inside a single-quoted shell string.
@@ -323,15 +485,23 @@ fn format_export_path(path: &str) -> String {
 
 /// Remove matching path segments from a PATH-like string.
 ///
-/// In addition to the canonical `location`, this may also remove the original
+/// In addition to the resolved `location`, this may also remove the original
 /// raw argument form when provided.
 fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -> String {
+    let normalized_location = strip_trailing_slash(location);
+    let normalized_raw = raw_path_arg.map(strip_trailing_slash);
+
     current
         .split(':')
         .filter(|segment| {
-            *segment != location
+            let normalized_segment = strip_trailing_slash(segment);
+
+            normalized_segment != normalized_location
                 && match raw_path_arg {
-                    Some(raw) => *segment != raw,
+                    Some(_) => normalized_raw
+                        .as_ref()
+                        .map(|raw| normalized_segment != *raw)
+                        .unwrap_or(true),
                     None => true,
                 }
         })
@@ -379,6 +549,15 @@ fn handle_add(add_matches: &ArgMatches) {
         std::process::exit(1);
     }
 
+    if !resolved_by_name && contains_path_separator(&location) {
+        eprintln!("error: path '{}' must not contain ':'", location);
+        std::process::exit(1);
+    }
+
+    if !resolved_by_name {
+        location = canonicalize_relative_cli_argument(&location);
+    }
+
     if Path::new(&location).exists() {
         match fs::metadata(&location) {
             Ok(meta) if !meta.is_dir() => {
@@ -410,19 +589,16 @@ fn handle_add(add_matches: &ArgMatches) {
                     std::process::exit(1);
                 }
 
-                let stored_location = match fs::canonicalize(&location) {
-                    Ok(path) => path.to_string_lossy().into_owned(),
-                    Err(_) => {
-                        eprintln!(
-                            "warning: could not canonicalize path '{}', storing as-is",
-                            location
-                        );
-                        location.clone()
-                    }
-                };
+                if !is_store_location_canonical_like(&location) {
+                    eprintln!(
+                        "error: cannot store location '{}': stored paths must be absolute, canonical-looking, and must not contain ':'",
+                        location
+                    );
+                    std::process::exit(1);
+                }
 
                 entries.push(PathEntry {
-                    location: stored_location,
+                    location: location.clone(),
                     name,
                     autoset,
                     line_number: 0,
@@ -441,14 +617,13 @@ fn handle_add(add_matches: &ArgMatches) {
         }
     }
 
-    let env_location = canonicalize_for_path_output(&location).unwrap_or_else(|| location.clone());
     let prepend = add_matches.is_present("pre");
     let current = env::var("PATH").unwrap_or_default();
 
-    let should_add = !path_contains_equivalent_directory(&current, &env_location);
+    let should_add = !path_contains_segment(&current, &location);
 
     let updated = if should_add {
-        compose_path(&current, &env_location, prepend)
+        compose_path(&current, &location, prepend)
     } else {
         current
     };
@@ -481,10 +656,12 @@ fn handle_remove(remove_matches: &ArgMatches) {
             std::process::exit(1);
         }
 
-        location_to_remove = match fs::canonicalize(&argument) {
-            Ok(path) => path.to_string_lossy().into_owned(),
-            Err(_) => argument.clone(),
-        };
+        if contains_path_separator(&argument) {
+            eprintln!("error: path '{}' must not contain ':'", argument);
+            std::process::exit(1);
+        }
+
+        location_to_remove = canonicalize_relative_cli_argument(&argument);
         raw_path_arg = Some(argument.as_str());
     }
 
@@ -524,10 +701,12 @@ fn handle_delete(delete_matches: &ArgMatches) {
             std::process::exit(1);
         }
 
-        let location_to_delete = match fs::canonicalize(&argument) {
-            Ok(path) => path.to_string_lossy().into_owned(),
-            Err(_) => argument.clone(),
-        };
+        if contains_path_separator(&argument) {
+            eprintln!("error: path '{}' must not contain ':'", argument);
+            std::process::exit(1);
+        }
+
+        let location_to_delete = canonicalize_relative_cli_argument(&argument);
         entries.retain(|entry| entry.location != location_to_delete);
     }
 
@@ -554,7 +733,7 @@ fn handle_list() {
 /// Handle the `load` subcommand.
 ///
 /// This appends all entries marked `auto` in `.path` to PATH, skipping
-/// directories that are already present (including canonical equivalents).
+/// entries already present as exact path segments.
 fn handle_load() {
     let entries = match load_entries() {
         Ok(entries) => entries,
@@ -566,10 +745,8 @@ fn handle_load() {
 
     let mut current = env::var("PATH").unwrap_or_default();
     for entry in entries.into_iter().filter(|entry| entry.autoset) {
-        let env_location =
-            canonicalize_for_path_output(&entry.location).unwrap_or_else(|| entry.location.clone());
-        if !path_contains_equivalent_directory(&current, &env_location) {
-            current = compose_path(&current, &env_location, false);
+        if !path_contains_segment(&current, &entry.location) {
+            current = compose_path(&current, &entry.location, false);
         }
     }
 
@@ -630,7 +807,7 @@ mod tests {
     #[test]
     /// Verify three-field lines are parsed into all struct fields.
     fn parse_entry_line_parses_three_fields() {
-        let entry = parse_entry_line("/tmp/tools\ttools\tnoauto", 7).unwrap();
+        let entry = parse_entry_line("/tmp/tools/ tools noauto", 7).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "tools");
         assert!(!entry.autoset);
@@ -638,8 +815,17 @@ mod tests {
     }
 
     #[test]
-    /// Verify lines without a tab become nameless entries for later validation.
-    fn parse_entry_line_without_tab_creates_nameless_entry() {
+    /// Ensure older tab-delimited lines are still supported.
+    fn parse_entry_line_legacy_tab_delimited_still_parses() {
+        let entry = parse_entry_line("/tmp/tools\ttools\tnoauto", 8).unwrap();
+        assert_eq!(entry.location, "/tmp/tools");
+        assert_eq!(entry.name, "tools");
+        assert!(!entry.autoset);
+    }
+
+    #[test]
+    /// Verify lines without a name field become nameless entries for validation.
+    fn parse_entry_line_without_name_field_creates_nameless_entry() {
         let entry = parse_entry_line("/tmp/tools", 3).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "");
@@ -660,21 +846,57 @@ mod tests {
     fn path_contains_segment_matches_exact_entries() {
         assert!(path_contains_segment("/a:/b:/c", "/b"));
         assert!(!path_contains_segment("/a:/b:/c", "/d"));
+        assert!(path_contains_segment("/a:/b/:/c", "/b"));
     }
 
     #[test]
-    /// Confirm canonical-equivalent directories are treated as already present.
-    fn path_contains_equivalent_directory_matches_canonical_equivalent() {
-        let cwd = env::current_dir().unwrap().to_string_lossy().into_owned();
-        assert!(path_contains_equivalent_directory(".:/usr/bin", &cwd));
-    }
-
-    #[test]
-    /// Ensure canonicalization resolves `.` to the current working directory.
-    fn canonicalize_for_path_output_resolves_dot() {
-        let canonical = canonicalize_for_path_output(".").unwrap();
+    /// Ensure relative CLI paths are canonicalized once into absolute form.
+    fn canonicalize_relative_cli_argument_resolves_dot() {
+        let canonical = canonicalize_relative_cli_argument(".");
         let cwd = env::current_dir().unwrap().to_string_lossy().into_owned();
         assert_eq!(canonical, cwd);
+    }
+
+    #[test]
+    /// Ensure absolute CLI paths are preserved as-is.
+    fn canonicalize_relative_cli_argument_keeps_absolute() {
+        assert_eq!(
+            canonicalize_relative_cli_argument("/usr/local/bin"),
+            "/usr/local/bin"
+        );
+    }
+
+    #[test]
+    /// Ensure `..` traversal beyond the root is clamped so the result stays absolute.
+    fn normalize_absolute_path_clamps_at_root() {
+        // `/a/../../x` would naively collapse to `x`; it must stay `/x`.
+        assert_eq!(
+            normalize_absolute_path(Path::new("/a/../../x")),
+            "/x"
+        );
+        // `/a/../..` must collapse to `/`, not an empty or relative path.
+        assert_eq!(
+            normalize_absolute_path(Path::new("/a/../..")),
+            "/"
+        );
+        // Normal `..` resolution within root should still work.
+        assert_eq!(
+            normalize_absolute_path(Path::new("/a/b/../c")),
+            "/a/c"
+        );
+    }
+
+    #[test]
+    /// Ensure canonical-looking validation rejects relative and non-normalized paths.
+    fn is_store_location_canonical_like_validates_shape() {
+        assert!(is_store_location_canonical_like("/usr/local/bin"));
+        assert!(is_store_location_canonical_like("/"));
+
+        assert!(!is_store_location_canonical_like("./rel"));
+        assert!(!is_store_location_canonical_like("/usr:local/bin"));
+        assert!(!is_store_location_canonical_like("/usr//local/bin"));
+        assert!(!is_store_location_canonical_like("/usr/../local/bin"));
+        assert!(!is_store_location_canonical_like("/usr/local/bin/"));
     }
 
     #[test]
@@ -692,6 +914,7 @@ mod tests {
     fn remove_from_path_removes_exact_segments() {
         assert_eq!(remove_from_path("/a:/b:/c", "/b", None), "/a:/c");
         assert_eq!(remove_from_path("/a:/b:/a", "/a", None), "/b");
+        assert_eq!(remove_from_path("/a:/b/:/c", "/b", None), "/a:/c");
     }
 
     #[test]
@@ -740,9 +963,34 @@ mod tests {
     }
 
     #[test]
-    /// Ensure blank third fields are interpreted as `auto` for manual edits.
-    fn parse_entry_line_blank_third_field_defaults_to_auto() {
-        let entry = parse_entry_line("/tmp/tools\ttools\t", 2).unwrap();
+    /// Ensure missing third fields are interpreted as `auto` for manual edits.
+    fn parse_entry_line_missing_third_field_defaults_to_auto() {
+        let entry = parse_entry_line("/tmp/tools tools", 2).unwrap();
+        assert!(entry.autoset);
+    }
+
+    #[test]
+    /// Ensure escaped whitespace format preserves spaces in stored locations.
+    fn parse_entry_line_escaped_whitespace_preserves_spaces_in_location() {
+        let entry = parse_entry_line("/tmp/my\\ tools tools auto", 4).unwrap();
+        assert_eq!(entry.location, "/tmp/my tools");
+        assert_eq!(entry.name, "tools");
+        assert!(entry.autoset);
+    }
+
+    #[test]
+    /// Ensure escaped backslashes are decoded from store lines.
+    fn parse_entry_line_decodes_escaped_backslash() {
+        let entry = parse_entry_line("/tmp/my\\\\tools tools auto", 4).unwrap();
+        assert_eq!(entry.location, "/tmp/my\\tools");
+    }
+
+    #[test]
+    /// Ensure unescaped spaces create a malformed nameless entry.
+    fn parse_entry_line_unescaped_spaced_location_is_malformed() {
+        let entry = parse_entry_line("/tmp/my tools tools auto", 5).unwrap();
+        assert_eq!(entry.location, "/tmp/my tools tools auto");
+        assert_eq!(entry.name, "");
         assert!(entry.autoset);
     }
 
@@ -755,7 +1003,7 @@ mod tests {
             autoset: true,
             line_number: 0,
         };
-        assert_eq!(format_entry_line(&auto), "/tmp/a\ta\tauto");
+        assert_eq!(format_entry_line(&auto), "/tmp/a a auto");
 
         let noauto = PathEntry {
             location: "/tmp/b".to_string(),
@@ -763,6 +1011,26 @@ mod tests {
             autoset: false,
             line_number: 0,
         };
-        assert_eq!(format_entry_line(&noauto), "/tmp/b\tb\tnoauto");
+        assert_eq!(format_entry_line(&noauto), "/tmp/b b noauto");
+    }
+
+    #[test]
+    /// Ensure serializer escapes whitespace and backslashes in fields.
+    fn format_entry_line_escapes_location_whitespace() {
+        let spaced = PathEntry {
+            location: "/tmp/my tools".to_string(),
+            name: "tools".to_string(),
+            autoset: true,
+            line_number: 0,
+        };
+        assert_eq!(format_entry_line(&spaced), "/tmp/my\\ tools tools auto");
+
+        let backslash = PathEntry {
+            location: "/tmp/my\\tools".to_string(),
+            name: "tools".to_string(),
+            autoset: true,
+            line_number: 0,
+        };
+        assert_eq!(format_entry_line(&backslash), "/tmp/my\\\\tools tools auto");
     }
 }
