@@ -384,13 +384,23 @@ fn contains_path_separator(path: &str) -> bool {
 /// without requiring the path to exist.
 fn normalize_absolute_path(path: &Path) -> String {
     let mut normalized = PathBuf::new();
+    // Track depth of Normal components so we never pop past the root.
+    let mut depth: usize = 0;
     for component in path.components() {
         match component {
             Component::RootDir => normalized.push("/"),
-            Component::Normal(segment) => normalized.push(segment),
+            Component::Normal(segment) => {
+                normalized.push(segment);
+                depth += 1;
+            }
             Component::CurDir => {}
             Component::ParentDir => {
-                normalized.pop();
+                // Clamp at root: only pop a Normal segment, never the RootDir,
+                // so an absolute input like `/a/../../x` yields `/x` not `x`.
+                if depth > 0 {
+                    normalized.pop();
+                    depth -= 1;
+                }
             }
             Component::Prefix(_) => {}
         }
@@ -853,6 +863,26 @@ mod tests {
         assert_eq!(
             canonicalize_relative_cli_argument("/usr/local/bin"),
             "/usr/local/bin"
+        );
+    }
+
+    #[test]
+    /// Ensure `..` traversal beyond the root is clamped so the result stays absolute.
+    fn normalize_absolute_path_clamps_at_root() {
+        // `/a/../../x` would naively collapse to `x`; it must stay `/x`.
+        assert_eq!(
+            normalize_absolute_path(Path::new("/a/../../x")),
+            "/x"
+        );
+        // `/a/../..` must collapse to `/`, not an empty or relative path.
+        assert_eq!(
+            normalize_absolute_path(Path::new("/a/../..")),
+            "/"
+        );
+        // Normal `..` resolution within root should still work.
+        assert_eq!(
+            normalize_absolute_path(Path::new("/a/b/../c")),
+            "/a/c"
         );
     }
 
