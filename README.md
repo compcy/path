@@ -127,3 +127,10 @@ and public items. To run the docs check locally:
 RUSTDOCFLAGS="-D warnings -W missing-docs" cargo doc --no-deps --document-private-items
 ```
 
+## License
+
+This project is licensed under the MIT License. See `LICENSE`.
+
+All Rust dependencies are required to have an SPDX license expression that
+includes `MIT`. CI enforces this policy.
+

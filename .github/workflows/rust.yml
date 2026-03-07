@@ -24,3 +24,12 @@ jobs:
       env:
         RUSTDOCFLAGS: -D warnings -W missing-docs
       run: cargo doc --no-deps --document-private-items
+    - name: Check dependency licenses include MIT
+      run: |
+        set -euo pipefail
+        NON_MIT="$(cargo metadata --format-version 1 --locked --filter-platform x86_64-unknown-linux-gnu | jq -r '.packages[] | select((.license // "") | contains("MIT") | not) | "\(.name)\t\(.version)\t\(.license // "NO_LICENSE")"')"
+        if [ -n "$NON_MIT" ]; then
+          echo "The following crates do not have an MIT-including license expression:"
+          echo "$NON_MIT"
+          exit 1
+        fi

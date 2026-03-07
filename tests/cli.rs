@@ -5,7 +5,6 @@
 // working directory and environment variables instead of calling internal
 // functions, as this ensures the CLI remains stable.
 use assert_cmd::cargo;
-use predicates::prelude::*;
 use std::fs;
 use tempfile::tempdir;
 
@@ -22,10 +21,10 @@ fn prints_path_env() {
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir).arg("--file").arg(dir.join(".path"));
     cmd.env("PATH", "foo:bar");
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("export PATH='"))
-        .stdout(predicate::str::contains("foo:bar"));
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert!(out_str.contains("export PATH='"));
+    assert!(out_str.contains("foo:bar"));
 }
 
 /// By default, entries are persisted to `$HOME/.path` when `--file` is omitted.
@@ -73,11 +72,17 @@ fn add_appends_but_only_records_with_name() {
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir).arg("--file").arg(dir.join(".path"));
     cmd.env("PATH", "A");
-    cmd.arg("add").arg("/tmp/x");
-    cmd.assert()
+    let output = cmd
+        .arg("add")
+        .arg("/tmp/x")
+        .assert()
         .success()
-        .stdout(predicate::str::contains("export PATH='"))
-        .stdout(predicate::str::contains("A:/tmp/x"));
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert!(out_str.contains("export PATH='"));
+    assert!(out_str.contains("A:/tmp/x"));
 
     // verify store file does not contain an entry
     let store = dir.join(".path");
@@ -95,11 +100,19 @@ fn add_with_name_and_prepend() {
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir).arg("--file").arg(dir.join(".path"));
     cmd.env("PATH", "B");
-    cmd.arg("add").arg("--pre").arg("/tmp/y").arg("yname");
-    cmd.assert()
+    let output = cmd
+        .arg("add")
+        .arg("--pre")
+        .arg("/tmp/y")
+        .arg("yname")
+        .assert()
         .success()
-        .stdout(predicate::str::contains("export PATH='"))
-        .stdout(predicate::str::contains("/tmp/y:B"));
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert!(out_str.contains("export PATH='"));
+    assert!(out_str.contains("/tmp/y:B"));
 
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();

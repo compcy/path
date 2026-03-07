@@ -3,6 +3,7 @@ name = "path"
 version = "0.1.0"
 authors = ["compcy <your_email@example.com>"]
 edition = "2021"
+license = "MIT"
 
 [dependencies]
 clap = "^2.33"  # Command line argument parser
@@ -10,7 +11,6 @@ regex = "1"
 
 [dev-dependencies]
 assert_cmd = "2.0"
-predicates = "2.1"
 tempfile = "3.5"
 
 [profile.release]
