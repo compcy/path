@@ -2,7 +2,8 @@
 
 `path` is a simple command-line utility for inspecting and manipulating the
 `PATH` environment variable. It also keeps a local record of added entries in
-a plain-text `.path` file, with optional names and autoset flags.
+a plain-text store file (default: `$HOME/.path`), with optional names and
+autoset flags.
 
 Because a child process cannot directly modify its parent shell environment,
 commands that compute PATH output a shell assignment like
@@ -21,7 +22,7 @@ shell PATH.
 
 ```sh
 # build and run with Cargo
-cargo run -- [OPTIONS] [SUBCOMMAND]
+cargo run -- [--file <path>] [SUBCOMMAND]
 
 # apply the new PATH in your current shell
 eval "$(path add /some/dir mydir)"
@@ -30,6 +31,11 @@ eval "$(path add /some/dir mydir)"
 . ./path-wrapper.sh
 path add /some/dir mydir
 ```
+
+Global option:
+
+- `--file <path>` — use a specific store file instead of the default `$HOME/.path`.
+- `-f` is intentionally not available (reserved for a future `--force` option).
 
 ### Commands
 
@@ -45,17 +51,17 @@ path add /some/dir mydir
   - If the path exists, it must be a directory (files are rejected).
   - If `name` is provided, it must be alphanumeric and unique.
   - Use `--noauto` to store a named entry that should not be included by `path load`.
-  - Only entries with an explicit `name` are written to `.path`.
+  - Only entries with an explicit `name` are written to the configured store file.
   - Existing PATH entries are not duplicated for equivalent trailing-slash forms (for example `/usr/local/bin` and `/usr/local/bin/`).
 - `path add --pre <location-or-name> [name]` — prepend instead of append
 - `path remove <location-or-name>` — remove from PATH only
   - If the argument matches a stored short name, its location is removed from PATH.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`).
   - This command does not modify `.path`.
-- `path delete <location-or-name>` — delete from `.path` only
+- `path delete <location-or-name>` — delete from the configured store file only
   - If the argument matches a stored short name, that entry is deleted.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`), and matching stored locations are deleted.
-- `path list` — show all saved entries from the `.path` file
+- `path list` — show all saved entries from the configured store file
 - `path load` — append all stored entries marked `auto` to PATH
 
 **Startup validation note:** when reading `.path`, the tool aborts if it finds:
@@ -88,8 +94,8 @@ path add foo
 path add .path
 ```
 
-Entries are persisted to a `.path` file in the current directory, but
-only for entries where you supplied an explicit name. New lines are written as
+Entries are persisted to `$HOME/.path` by default (or the file passed with
+`--file`), but only for entries where you supplied an explicit name. New lines are written as
 `location name autoset?` with fields separated by whitespace, where autoset is
 `auto` or `noauto`.
 If the third field is missing, it is treated as `auto`. (Because a name is

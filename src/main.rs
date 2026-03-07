@@ -1,7 +1,7 @@
 //! Command-line utility for inspecting and manipulating shell PATH values.
 //!
 //! The binary supports adding, removing, deleting, and listing entries while
-//! optionally persisting named mappings in a local `.path` store file.
+//! optionally persisting named mappings in a store file (default: `$HOME/.path`).
 #![deny(warnings)]
 
 use clap::{App, Arg, ArgMatches, SubCommand};
@@ -21,7 +21,26 @@ struct PathEntry {
     line_number: usize,
 }
 
-const STORE_FILE: &str = ".path";
+const DEFAULT_STORE_FILE_NAME: &str = ".path";
+
+/// Return the default store file path.
+///
+/// The default is `$HOME/.path`; if `HOME` is unavailable we fall back to a
+/// relative `.path` in the current directory.
+fn default_store_file_path() -> PathBuf {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(DEFAULT_STORE_FILE_NAME))
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_STORE_FILE_NAME))
+}
+
+/// Resolve the store file path from CLI arguments.
+fn resolve_store_file_path(matches: &ArgMatches) -> PathBuf {
+    matches
+        .value_of("store_file")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_store_file_path)
+}
 
 /// Parse a line from the store file.
 ///
@@ -162,14 +181,13 @@ fn format_entry_line(entry: &PathEntry) -> String {
     )
 }
 
-/// Load entries from the STORE_FILE; if the file doesn't exist return an empty
+/// Load entries from the store file; if the file doesn't exist return an empty
 /// vector.
-fn load_entries() -> io::Result<Vec<PathEntry>> {
-    let path = Path::new(STORE_FILE);
-    if !path.exists() {
+fn load_entries(store_file: &Path) -> io::Result<Vec<PathEntry>> {
+    if !store_file.exists() {
         return Ok(Vec::new());
     }
-    let file = fs::File::open(path)?;
+    let file = fs::File::open(store_file)?;
     let reader = io::BufReader::new(file);
     let mut entries = Vec::new();
     for (index, line) in reader.lines().enumerate() {
@@ -187,13 +205,13 @@ fn is_valid_name(name: &str) -> bool {
 }
 
 /// Write all provided entries back to the store file, overwriting it.
-fn save_entries(entries: &[PathEntry]) -> io::Result<()> {
+fn save_entries(store_file: &Path, entries: &[PathEntry]) -> io::Result<()> {
     let mut data = String::new();
     for e in entries {
         data.push_str(&format_entry_line(e));
         data.push('\n');
     }
-    fs::write(STORE_FILE, data)
+    fs::write(store_file, data)
 }
 
 /// Entry point for the `path` utility.
@@ -201,13 +219,13 @@ fn save_entries(entries: &[PathEntry]) -> io::Result<()> {
 /// Parses command-line arguments, handles the `add` subcommand (recording
 /// entries and emitting the modified PATH string), or otherwise prints the
 /// current `PATH` environment variable.  The function is intentionally kept
-/// small; helper routines above manage persistence to the `.path` store.
+/// small; helper routines above manage persistence to the configured store file.
 /// Check the existing entries, reporting any whose `location` does not
 /// currently exist.  Nameless/invalid/duplicate names are fatal errors;
 /// missing locations are warnings only. Returns an I/O error only if
 /// reading fails.
-fn validate_entries() -> io::Result<()> {
-    let entries = load_entries()?;
+fn validate_entries(store_file: &Path) -> io::Result<()> {
+    let entries = load_entries(store_file)?;
 
     // Ensure there are no entries without a name.  If one is discovered we
     // treat this as a fatal error: the user should correct or remove the
@@ -219,7 +237,9 @@ fn validate_entries() -> io::Result<()> {
     if let Some(e) = entries.iter().find(|e| e.name.is_empty()) {
         eprintln!(
             "error: found nameless entry in {} at line {}: '{}'",
-            STORE_FILE, e.line_number, e.location
+            store_file.display(),
+            e.line_number,
+            e.location
         );
         std::process::exit(1);
     }
@@ -232,7 +252,9 @@ fn validate_entries() -> io::Result<()> {
     {
         eprintln!(
             "error: invalid stored location '{}' at line {}: locations in {} must be absolute, canonical-looking, and must not contain ':'",
-            e.location, e.line_number, STORE_FILE
+            e.location,
+            e.line_number,
+            store_file.display()
         );
         std::process::exit(1);
     }
@@ -295,6 +317,14 @@ fn build_cli() -> App<'static, 'static> {
     App::new("path")
         .version("0.1.0")
         .about("Utility for inspecting and manipulating the PATH environment variable")
+        .arg(
+            Arg::with_name("store_file")
+                .long("file")
+                .value_name("FILE")
+                .help("Store file to read/write (default: $HOME/.path)")
+                .takes_value(true)
+                .global(true),
+        )
         .subcommand(
             SubCommand::with_name("add")
                 .about("Add a directory to the PATH")
@@ -335,17 +365,20 @@ fn build_cli() -> App<'static, 'static> {
         )
         .subcommand(
             SubCommand::with_name("delete")
-                .about("Delete a stored entry from the .path file")
+                .about("Delete a stored entry from the configured store file")
                 .arg(
                     Arg::with_name("location")
-                        .help("Location or stored name to delete from .path")
+                        .help("Location or stored name to delete from the configured store file")
                         .required(true)
                         .index(1),
                 ),
         )
-        .subcommand(SubCommand::with_name("list").about("List entries stored in the .path file"))
         .subcommand(
-            SubCommand::with_name("load").about("Add all auto entries from the .path file to PATH"),
+            SubCommand::with_name("list").about("List entries stored in the configured store file"),
+        )
+        .subcommand(
+            SubCommand::with_name("load")
+                .about("Add all auto entries from the configured store file to PATH"),
         )
 }
 
@@ -522,11 +555,11 @@ fn format_list_entry(entry: &PathEntry) -> String {
 ///
 /// This resolves named entries, validates path shape, optionally persists a
 /// named mapping, and prints the resulting PATH export command.
-fn handle_add(add_matches: &ArgMatches) {
+fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
     let mut location = add_matches.value_of("location").unwrap().to_string();
     let mut resolved_by_name = false;
 
-    match load_entries() {
+    match load_entries(store_file) {
         Ok(entries) => {
             if let Some(resolved_location) = resolve_location_by_name(&location, &entries) {
                 location = resolved_location;
@@ -582,7 +615,7 @@ fn handle_add(add_matches: &ArgMatches) {
             std::process::exit(1);
         }
 
-        match load_entries() {
+        match load_entries(store_file) {
             Ok(mut entries) => {
                 if entries.iter().any(|entry| entry.name == name) {
                     eprintln!("error: name '{}' is already in use", name);
@@ -604,7 +637,7 @@ fn handle_add(add_matches: &ArgMatches) {
                     line_number: 0,
                 });
 
-                if let Err(error) = save_entries(&entries) {
+                if let Err(error) = save_entries(store_file, &entries) {
                     eprintln!("warning: failed to update store file: {}", error);
                 }
             }
@@ -634,12 +667,12 @@ fn handle_add(add_matches: &ArgMatches) {
 ///
 /// This resolves a stored name (or validates a raw path), removes matching
 /// segments from PATH, and prints the resulting export command.
-fn handle_remove(remove_matches: &ArgMatches) {
+fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
     let argument = remove_matches.value_of("location").unwrap().to_string();
     let mut location_to_remove = argument.clone();
     let mut resolved_by_name = false;
 
-    if let Ok(entries) = load_entries() {
+    if let Ok(entries) = load_entries(store_file) {
         if let Some(resolved_location) = resolve_location_by_name(&argument, &entries) {
             location_to_remove = resolved_location;
             resolved_by_name = true;
@@ -679,10 +712,10 @@ fn handle_remove(remove_matches: &ArgMatches) {
 /// Handle the `delete` subcommand.
 ///
 /// This updates the on-disk store by removing an entry by name or by location.
-fn handle_delete(delete_matches: &ArgMatches) {
+fn handle_delete(delete_matches: &ArgMatches, store_file: &Path) {
     let argument = delete_matches.value_of("location").unwrap().to_string();
 
-    let mut entries = match load_entries() {
+    let mut entries = match load_entries(store_file) {
         Ok(entries) => entries,
         Err(error) => {
             eprintln!("error: failed to load entries: {}", error);
@@ -710,14 +743,14 @@ fn handle_delete(delete_matches: &ArgMatches) {
         entries.retain(|entry| entry.location != location_to_delete);
     }
 
-    if let Err(error) = save_entries(&entries) {
+    if let Err(error) = save_entries(store_file, &entries) {
         eprintln!("warning: failed to update store file: {}", error);
     }
 }
 
 /// Handle the `list` subcommand by printing all stored entries.
-fn handle_list() {
-    match load_entries() {
+fn handle_list(store_file: &Path) {
+    match load_entries(store_file) {
         Ok(entries) => {
             for entry in entries {
                 println!("{}", format_list_entry(&entry));
@@ -732,10 +765,10 @@ fn handle_list() {
 
 /// Handle the `load` subcommand.
 ///
-/// This appends all entries marked `auto` in `.path` to PATH, skipping
+/// This appends all entries marked `auto` in the configured store file to PATH, skipping
 /// entries already present as exact path segments.
-fn handle_load() {
-    let entries = match load_entries() {
+fn handle_load(store_file: &Path) {
+    let entries = match load_entries(store_file) {
         Ok(entries) => entries,
         Err(error) => {
             eprintln!("error: failed to load entries: {}", error);
@@ -766,34 +799,35 @@ fn print_current_path() {
 /// Validates stored entries, dispatches subcommands, and falls back to
 /// printing the current PATH when no subcommand is provided.
 fn main() {
-    if let Err(error) = validate_entries() {
+    let matches = build_cli().get_matches();
+    let store_file = resolve_store_file_path(&matches);
+
+    if let Err(error) = validate_entries(&store_file) {
         eprintln!("warning: could not validate entries: {}", error);
     }
 
-    let matches = build_cli().get_matches();
-
     if let Some(add_matches) = matches.subcommand_matches("add") {
-        handle_add(add_matches);
+        handle_add(add_matches, &store_file);
         return;
     }
 
     if let Some(remove_matches) = matches.subcommand_matches("remove") {
-        handle_remove(remove_matches);
+        handle_remove(remove_matches, &store_file);
         return;
     }
 
     if let Some(delete_matches) = matches.subcommand_matches("delete") {
-        handle_delete(delete_matches);
+        handle_delete(delete_matches, &store_file);
         return;
     }
 
     if matches.subcommand_matches("list").is_some() {
-        handle_list();
+        handle_list(&store_file);
         return;
     }
 
     if matches.subcommand_matches("load").is_some() {
-        handle_load();
+        handle_load(&store_file);
         return;
     }
 
@@ -870,20 +904,11 @@ mod tests {
     /// Ensure `..` traversal beyond the root is clamped so the result stays absolute.
     fn normalize_absolute_path_clamps_at_root() {
         // `/a/../../x` would naively collapse to `x`; it must stay `/x`.
-        assert_eq!(
-            normalize_absolute_path(Path::new("/a/../../x")),
-            "/x"
-        );
+        assert_eq!(normalize_absolute_path(Path::new("/a/../../x")), "/x");
         // `/a/../..` must collapse to `/`, not an empty or relative path.
-        assert_eq!(
-            normalize_absolute_path(Path::new("/a/../..")),
-            "/"
-        );
+        assert_eq!(normalize_absolute_path(Path::new("/a/../..")), "/");
         // Normal `..` resolution within root should still work.
-        assert_eq!(
-            normalize_absolute_path(Path::new("/a/b/../c")),
-            "/a/c"
-        );
+        assert_eq!(normalize_absolute_path(Path::new("/a/b/../c")), "/a/c");
     }
 
     #[test]
