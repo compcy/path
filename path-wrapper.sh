@@ -9,11 +9,7 @@
 path() {
     _path_cli_bin="${PATH_CLI_BIN:-}"
     if [ -z "$_path_cli_bin" ]; then
-        if [ -x "./target/debug/path" ]; then
-            _path_cli_bin="./target/debug/path"
-        else
-            _path_cli_bin="path"
-        fi
+        _path_cli_bin="path"
     fi
 
     _path_stdout="$(command "$_path_cli_bin" "$@")"
