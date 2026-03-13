@@ -44,6 +44,27 @@ fn default_store_file_is_home_dot_path() {
     assert!(contents.contains("/tmp/home-default homeentry auto"));
 }
 
+/// Creating a new store file should write a first-line layout comment.
+#[test]
+fn add_writes_layout_comment_when_creating_store_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(&store)
+        .env("PATH", "");
+    cmd.arg("add").arg("/tmp/layout").arg("layout");
+    cmd.assert().success();
+
+    let contents = fs::read_to_string(store).unwrap();
+    let mut lines = contents.lines();
+    assert_eq!(lines.next(), Some("# layout: <location> <name> <autoset?>"));
+    assert_eq!(lines.next(), Some("/tmp/layout layout auto"));
+}
+
 /// The store-file option is long-only; `-f` is reserved for future use.
 #[test]
 fn short_f_is_not_accepted() {

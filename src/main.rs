@@ -22,6 +22,7 @@ struct PathEntry {
 }
 
 const DEFAULT_STORE_FILE_NAME: &str = ".path";
+const STORE_FILE_LAYOUT_COMMENT: &str = "# layout: <location> <name> <autoset?>";
 
 /// Return the default store file path.
 ///
@@ -121,8 +122,15 @@ fn escape_store_field(field: &str) -> String {
 }
 
 fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
+    let trimmed = line.trim();
+
     // skip blank lines entirely
-    if line.trim().is_empty() {
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // allow comments in the store file (for example, the generated header)
+    if trimmed.starts_with('#') {
         return None;
     }
 
@@ -159,7 +167,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                 line_number
             );
             PathEntry {
-                location: strip_trailing_slash(line.trim()),
+                location: strip_trailing_slash(trimmed),
                 name: String::new(),
                 autoset: true,
                 line_number,
@@ -207,6 +215,8 @@ fn is_valid_name(name: &str) -> bool {
 /// Write all provided entries back to the store file, overwriting it.
 fn save_entries(store_file: &Path, entries: &[PathEntry]) -> io::Result<()> {
     let mut data = String::new();
+    data.push_str(STORE_FILE_LAYOUT_COMMENT);
+    data.push('\n');
     for e in entries {
         data.push_str(&format_entry_line(e));
         data.push('\n');
@@ -1020,6 +1030,13 @@ mod tests {
     fn parse_entry_line_decodes_escaped_backslash() {
         let entry = parse_entry_line("/tmp/my\\\\tools tools auto", 4).unwrap();
         assert_eq!(entry.location, "/tmp/my\\tools");
+    }
+
+    #[test]
+    /// Ensure comment lines in the store file are ignored by the parser.
+    fn parse_entry_line_comment_line_is_ignored() {
+        assert!(parse_entry_line("# layout: <location> <name> <autoset?>", 1).is_none());
+        assert!(parse_entry_line("   # user note", 2).is_none());
     }
 
     #[test]
