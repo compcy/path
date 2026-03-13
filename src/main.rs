@@ -544,10 +544,11 @@ fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -
 
 /// Format a stored entry for human-readable list output.
 fn format_list_entry(entry: &PathEntry) -> String {
+    let autoset_marker = if entry.autoset { "auto" } else { "noauto" };
     if entry.name != entry.location {
-        format!("{} ({})", entry.location, entry.name)
+        format!("{} ({}) [{}]", entry.location, entry.name, autoset_marker)
     } else {
-        entry.location.clone()
+        format!("{} [{}]", entry.location, autoset_marker)
     }
 }
 
@@ -750,8 +751,19 @@ fn handle_delete(delete_matches: &ArgMatches, store_file: &Path) {
 
 /// Handle the `list` subcommand by printing all stored entries.
 fn handle_list(store_file: &Path) {
+    let store_exists = store_file.exists();
+
     match load_entries(store_file) {
         Ok(entries) => {
+            if entries.is_empty() {
+                if store_exists {
+                    println!("No stored entries.");
+                } else {
+                    println!("No stored entries: store file does not exist.");
+                }
+                return;
+            }
+
             for entry in entries {
                 println!("{}", format_list_entry(&entry));
             }
@@ -968,7 +980,7 @@ mod tests {
     }
 
     #[test]
-    /// Ensure list formatting includes names only when distinct from location.
+    /// Ensure list formatting includes names when distinct and always includes autoset status.
     fn format_list_entry_includes_name_when_different() {
         let entry = PathEntry {
             location: "/usr/local/bin".to_string(),
@@ -976,15 +988,15 @@ mod tests {
             autoset: true,
             line_number: 0,
         };
-        assert_eq!(format_list_entry(&entry), "/usr/local/bin (tools)");
+        assert_eq!(format_list_entry(&entry), "/usr/local/bin (tools) [auto]");
 
         let same = PathEntry {
             location: "/usr/bin".to_string(),
             name: "/usr/bin".to_string(),
-            autoset: true,
+            autoset: false,
             line_number: 0,
         };
-        assert_eq!(format_list_entry(&same), "/usr/bin");
+        assert_eq!(format_list_entry(&same), "/usr/bin [noauto]");
     }
 
     #[test]

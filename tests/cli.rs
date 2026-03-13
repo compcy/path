@@ -211,8 +211,79 @@ fn list_shows_entries() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/foo (foo)"));
+    assert!(out_str.contains("/foo (foo) [auto]"));
     assert!(!out_str.contains("/bar"));
+}
+
+/// Entries stored as `noauto` should display their status in list output.
+#[test]
+fn list_shows_noauto_status() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "/opt/auto a auto\n/opt/no n noauto\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "");
+    let output = cmd
+        .arg("list")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert!(out_str.contains("/opt/auto (a) [auto]"));
+    assert!(out_str.contains("/opt/no (n) [noauto]"));
+}
+
+/// `list` should print a message when the configured store file is missing.
+#[test]
+fn list_reports_missing_store_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "");
+    let output = cmd
+        .arg("list")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert!(out_str.contains("No stored entries: store file does not exist."));
+}
+
+/// `list` should print a message when the store file exists but has no entries.
+#[test]
+fn list_reports_empty_store_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "");
+    let output = cmd
+        .arg("list")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert!(out_str.contains("No stored entries."));
 }
 
 /// If `.path` contains entries whose locations don't exist, the tool should
@@ -762,8 +833,8 @@ fn list_normalizes_trailing_slash_from_store_file() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/opt/tools (tools)"));
-    assert!(!out_str.contains("/opt/tools/ (tools)"));
+    assert!(out_str.contains("/opt/tools (tools) [auto]"));
+    assert!(!out_str.contains("/opt/tools/ (tools) [auto]"));
 }
 
 /// Stored relative locations should be rejected during startup validation.
@@ -863,7 +934,7 @@ fn list_decodes_escaped_spaces_in_location() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/opt/my tools (tools)"));
+    assert!(out_str.contains("/opt/my tools (tools) [auto]"));
 }
 
 /// `load` should add only `auto` entries and skip `noauto` entries.
@@ -918,7 +989,7 @@ fn list_accepts_space_separated_entries() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/opt/tools (tools)"));
+    assert!(out_str.contains("/opt/tools (tools) [auto]"));
 }
 
 /// `load` should treat a blank third field as `auto` for manually edited files.
