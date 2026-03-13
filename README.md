@@ -9,14 +9,26 @@ Because a child process cannot directly modify its parent shell environment,
 commands that compute PATH output a shell assignment like
 `export PATH='...new value...'`.
 
-If you prefer not to type `eval` each time, source the wrapper script once:
+For a persistent setup, source the wrapper script from your shell rc file
+(`~/.zshrc`, `~/.bashrc`, etc.). Place your normal PATH edits before sourcing
+the wrapper so they are present when `path load` runs.
 
 ```sh
-. ./path-wrapper.sh
+# ~/.zshrc (or ~/.bashrc)
+export PATH="$HOME/.cargo/bin:$PATH"
+. "$HOME/git/path/path-wrapper.sh"
 ```
 
-Then `path add ...` and `path remove ...` automatically apply to the current
-shell PATH.
+Sourcing `path-wrapper.sh` defines the shell function and immediately runs
+`path load`, so each new terminal session loads auto entries from `.path`.
+
+If `path` is not yet on PATH when your rc file runs, set `PATH_CLI_BIN` before
+sourcing the wrapper:
+
+```sh
+PATH_CLI_BIN="$HOME/git/path/target/debug/path"
+. "$HOME/git/path/path-wrapper.sh"
+```
 
 ## Usage
 
@@ -24,11 +36,10 @@ shell PATH.
 # build and run with Cargo
 cargo run -- [--file <path>] [SUBCOMMAND]
 
-# apply the new PATH in your current shell
+# one-off usage without the wrapper
 eval "$(path add /some/dir mydir)"
 
-# or source the wrapper once and run directly
-. ./path-wrapper.sh
+# after rc-file setup, this updates PATH directly
 path add /some/dir mydir
 ```
 
@@ -63,6 +74,7 @@ Global option:
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`), and matching stored locations are deleted.
 - `path list` — show all saved entries from the configured store file
 - `path load` — append all stored entries marked `auto` to PATH
+  - This runs automatically when `path-wrapper.sh` is sourced (for example at shell startup from your rc file).
 
 **Startup validation note:** when reading `.path`, the tool aborts if it finds:
 - a nameless entry,
@@ -85,7 +97,7 @@ path add home                        # uses stored name "home" if present
 path remove /home/$USER/.bin         # remove by path
 path remove home                     # remove from PATH by stored short name
 path delete home                     # delete stored entry from .path by name
-path load                            # add only entries marked auto
+path load                            # add only entries marked auto (usually automatic at shell startup)
 
 # invalid unless "foo" is a stored name
 path add foo

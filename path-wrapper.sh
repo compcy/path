@@ -35,3 +35,5 @@ path() {
             ;;
     esac
 }
+
+path load
