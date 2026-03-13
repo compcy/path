@@ -234,9 +234,7 @@ fn save_entries(store_file: &Path, entries: &[PathEntry]) -> io::Result<()> {
 /// currently exist.  Nameless/invalid/duplicate names are fatal errors;
 /// missing locations are warnings only. Returns an I/O error only if
 /// reading fails.
-fn validate_entries(store_file: &Path) -> io::Result<()> {
-    let entries = load_entries(store_file)?;
-
+fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry]) {
     // Ensure there are no entries without a name.  If one is discovered we
     // treat this as a fatal error: the user should correct or remove the
     // offending line manually.  We print the location so they know which line
@@ -312,13 +310,21 @@ fn validate_entries(store_file: &Path) -> io::Result<()> {
         .filter(|e| !Path::new(&e.location).exists())
         .collect();
     if invalid.is_empty() {
-        return Ok(());
+        return;
     }
 
     eprintln!("warning: the following stored paths do not exist:");
     for e in invalid {
         eprintln!("  {}", e.location);
     }
+}
+
+/// Validate the configured store file entries.
+///
+/// Returns an I/O error only if loading entries fails.
+fn validate_entries(store_file: &Path) -> io::Result<()> {
+    let entries = load_entries(store_file)?;
+    validate_loaded_entries(store_file, &entries);
     Ok(())
 }
 
@@ -389,6 +395,10 @@ fn build_cli() -> App<'static, 'static> {
         .subcommand(
             SubCommand::with_name("load")
                 .about("Add all auto entries from the configured store file to PATH"),
+        )
+        .subcommand(
+            SubCommand::with_name("verify")
+                .about("Validate configured store entries and report status"),
         )
 }
 
@@ -808,6 +818,33 @@ fn handle_load(store_file: &Path) {
     println!("{}", format_export_path(&current));
 }
 
+/// Handle the `verify` subcommand.
+///
+/// Validation errors are emitted by `validate_entries`; when no failures are
+/// found this prints a short success message.
+fn handle_verify(store_file: &Path) {
+    if !store_file.exists() {
+        eprintln!("error: store file does not exist: {}", store_file.display());
+        std::process::exit(1);
+    }
+
+    let entries = match load_entries(store_file) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!("error: failed to load entries: {}", error);
+            std::process::exit(1);
+        }
+    };
+
+    if entries.is_empty() {
+        eprintln!("error: store file has no entries: {}", store_file.display());
+        std::process::exit(1);
+    }
+
+    validate_loaded_entries(store_file, &entries);
+    println!("Path file is valid.");
+}
+
 /// Print the current PATH value as a shell export statement.
 fn print_current_path() {
     match env::var("PATH") {
@@ -823,6 +860,11 @@ fn print_current_path() {
 fn main() {
     let matches = build_cli().get_matches();
     let store_file = resolve_store_file_path(&matches);
+
+    if matches.subcommand_matches("verify").is_some() {
+        handle_verify(&store_file);
+        return;
+    }
 
     if let Err(error) = validate_entries(&store_file) {
         eprintln!("warning: could not validate entries: {}", error);

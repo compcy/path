@@ -10,12 +10,10 @@ commands that compute PATH output a shell assignment like
 `export PATH='...new value...'`.
 
 For a persistent setup, source the wrapper script from your shell rc file
-(`~/.zshrc`, `~/.bashrc`, etc.). Place your normal PATH edits before sourcing
-the wrapper so they are present when `path load` runs.
+(`~/.zshrc`, `~/.bashrc`, etc.). 
 
 ```sh
 # ~/.zshrc (or ~/.bashrc)
-export PATH="$HOME/.cargo/bin:$PATH"
 . "$HOME/git/path/path-wrapper.sh"
 ```
 
@@ -28,6 +26,13 @@ sourcing the wrapper:
 ```sh
 PATH_CLI_BIN="$HOME/git/path/target/debug/path"
 . "$HOME/git/path/path-wrapper.sh"
+```
+
+Move any or your paths from your rc file into .path:
+export PATH="$HOME/.cargo/bin:$PATH"
+
+```sh
+path add $HOME/.cargo/bin cargo
 ```
 
 ## Usage
@@ -75,6 +80,9 @@ Global option:
 - `path list` — show all saved entries from the configured store file
 - `path load` — append all stored entries marked `auto` to PATH
   - This runs automatically when `path-wrapper.sh` is sourced (for example at shell startup from your rc file).
+- `path verify` — validate configured store entries and print `Path file is valid.` when validation passes
+  - If the configured store file does not exist or has no entries, it fails.
+  - On validation failure, it prints the failure details and exits non-zero.
 
 **Startup validation note:** when reading `.path`, the tool aborts if it finds:
 - a nameless entry,
@@ -98,6 +106,7 @@ path remove /home/$USER/.bin         # remove by path
 path remove home                     # remove from PATH by stored short name
 path delete home                     # delete stored entry from .path by name
 path load                            # add only entries marked auto (usually automatic at shell startup)
+path verify                          # validate .path contents and report status
 
 # invalid unless "foo" is a stored name
 path add foo

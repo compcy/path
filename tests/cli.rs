@@ -1037,3 +1037,81 @@ fn load_treats_blank_third_field_as_auto() {
 
     assert!(out_str.contains("/opt/manual"));
 }
+
+/// `verify` should report success when validation passes.
+#[test]
+fn verify_reports_success_when_entries_are_valid() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+
+    let location = dir.to_string_lossy();
+    fs::write(&store, format!("{}\tvalid\tauto\n", location)).unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "");
+    let output = cmd
+        .arg("verify")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+    assert!(out_str.contains("Path file is valid."));
+}
+
+/// `verify` should surface validation failures from the store file.
+#[test]
+fn verify_surfaces_validation_failures() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "/foo/a\tdup\tauto\n/foo/b\tdup\tauto\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "");
+    let assert = cmd.arg("verify").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("error: duplicate name 'dup'"));
+}
+
+/// `verify` should fail when the configured store file does not exist.
+#[test]
+fn verify_fails_when_store_file_is_missing() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "");
+    let assert = cmd.arg("verify").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("error: store file does not exist"));
+}
+
+/// `verify` should fail when the configured store file exists but has no entries.
+#[test]
+fn verify_fails_when_store_file_is_empty() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "");
+    let assert = cmd.arg("verify").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("error: store file has no entries"));
+}
