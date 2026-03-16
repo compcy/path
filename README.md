@@ -28,6 +28,23 @@ PATH_CLI_BIN="$HOME/git/path/target/debug/path"
 . "$HOME/git/path/path-wrapper.sh"
 ```
 
+For stricter wrapper hardening, you can optionally pin trusted install
+locations and the binary checksum:
+
+```sh
+PATH_CLI_BIN="/opt/homebrew/bin/path"
+PATH_CLI_ALLOWLIST="/opt/homebrew/bin:/usr/local/bin/path"
+PATH_CLI_SHA256="$(shasum -a 256 "$PATH_CLI_BIN" | awk '{print $1}')"
+. "$HOME/git/path/path-wrapper.sh"
+```
+
+`PATH_CLI_ALLOWLIST` is a colon-delimited list of absolute paths. Each entry
+can be an exact binary path (for example `/usr/local/bin/path`) or an absolute
+directory prefix (for example `/opt/homebrew/bin`).
+
+`PATH_CLI_SHA256`, when set, must be the exact 64-character hex SHA-256 digest
+for the resolved binary path. If it does not match, the wrapper refuses to run.
+
 Move any or your paths from your rc file into .path:
 export PATH="$HOME/.cargo/bin:$PATH"
 
@@ -146,6 +163,12 @@ and public items. To run the docs check locally:
 
 ```sh
 RUSTDOCFLAGS="-D warnings -W missing-docs" cargo doc --no-deps --document-private-items
+```
+
+To run wrapper security regression tests locally:
+
+```sh
+sh tests/path-wrapper-security.sh
 ```
 
 ## License
