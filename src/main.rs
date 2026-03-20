@@ -22,7 +22,7 @@ struct PathEntry {
 }
 
 const DEFAULT_STORE_FILE_NAME: &str = ".path";
-const STORE_FILE_LAYOUT_COMMENT: &str = "# layout: <location> <name> <autoset?>";
+const STORE_FILE_LAYOUT_COMMENT: &str = "# layout: <location> [<name>] (<options>)";
 
 /// Return the default store file path.
 ///
@@ -45,12 +45,16 @@ fn resolve_store_file_path(matches: &ArgMatches) -> PathBuf {
 
 /// Parse a line from the store file.
 ///
-/// Preferred format is `<location> <name> <autoset?>` with fields separated by
-/// whitespace. To preserve embedded whitespace within fields, any whitespace
-/// and `\\` characters are escaped with `\\` (for example `/tmp/my\ tools`).
+/// Preferred format is `<location> [<name>] (<options>)` with fields separated
+/// by whitespace. To preserve embedded whitespace within fields, any
+/// whitespace and `\\` characters are escaped with `\\` (for example
+/// `/tmp/my\ tools`).
 ///
-/// `autoset` is `auto` or `noauto`; missing or blank autoset values are
-/// treated as `auto`.
+/// `name` is wrapped in `[]` and options are wrapped in `()`. For backward
+/// compatibility, legacy unwrapped tokens are also accepted.
+///
+/// `autoset` options are `auto` or `noauto`; missing or blank autoset values
+/// are treated as `auto`.
 fn parse_autoset_value(value: &str) -> bool {
     match value {
         "" | "auto" => true,
@@ -63,6 +67,25 @@ fn parse_autoset_value(value: &str) -> bool {
             true
         }
     }
+}
+
+/// Decode a stored name field, accepting both `[name]` and legacy `name`.
+fn parse_name_field(value: &str) -> String {
+    value
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(value)
+        .to_string()
+}
+
+/// Decode autoset options, accepting both `(auto)`/`(noauto)` and legacy tokens.
+fn parse_autoset_field(value: &str) -> bool {
+    let normalized = value
+        .strip_prefix('(')
+        .and_then(|inner| inner.strip_suffix(')'))
+        .unwrap_or(value)
+        .trim();
+    parse_autoset_value(normalized)
 }
 
 /// Split a whitespace-delimited line while honoring backslash escapes.
@@ -139,14 +162,14 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
     let entry = match parts.as_slice() {
         [location, name] => PathEntry {
             location: strip_trailing_slash(location),
-            name: name.clone(),
+            name: parse_name_field(name),
             autoset: true,
             line_number,
         },
         [location, name, autoset] => PathEntry {
             location: strip_trailing_slash(location),
-            name: name.clone(),
-            autoset: parse_autoset_value(autoset),
+            name: parse_name_field(name),
+            autoset: parse_autoset_field(autoset),
             line_number,
         },
         [location] => {
@@ -182,7 +205,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
 fn format_entry_line(entry: &PathEntry) -> String {
     let autoset = if entry.autoset { "auto" } else { "noauto" };
     format!(
-        "{} {} {}",
+        "{} [{}] ({})",
         escape_store_field(&entry.location),
         entry.name,
         autoset
@@ -905,7 +928,7 @@ mod tests {
     #[test]
     /// Verify three-field lines are parsed into all struct fields.
     fn parse_entry_line_parses_three_fields() {
-        let entry = parse_entry_line("/tmp/tools/ tools noauto", 7).unwrap();
+        let entry = parse_entry_line("/tmp/tools/ [tools] (noauto)", 7).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "tools");
         assert!(!entry.autoset);
@@ -1054,14 +1077,14 @@ mod tests {
     #[test]
     /// Ensure missing third fields are interpreted as `auto` for manual edits.
     fn parse_entry_line_missing_third_field_defaults_to_auto() {
-        let entry = parse_entry_line("/tmp/tools tools", 2).unwrap();
+        let entry = parse_entry_line("/tmp/tools [tools]", 2).unwrap();
         assert!(entry.autoset);
     }
 
     #[test]
     /// Ensure escaped whitespace format preserves spaces in stored locations.
     fn parse_entry_line_escaped_whitespace_preserves_spaces_in_location() {
-        let entry = parse_entry_line("/tmp/my\\ tools tools auto", 4).unwrap();
+        let entry = parse_entry_line("/tmp/my\\ tools [tools] (auto)", 4).unwrap();
         assert_eq!(entry.location, "/tmp/my tools");
         assert_eq!(entry.name, "tools");
         assert!(entry.autoset);
@@ -1070,14 +1093,14 @@ mod tests {
     #[test]
     /// Ensure escaped backslashes are decoded from store lines.
     fn parse_entry_line_decodes_escaped_backslash() {
-        let entry = parse_entry_line("/tmp/my\\\\tools tools auto", 4).unwrap();
+        let entry = parse_entry_line("/tmp/my\\\\tools [tools] (auto)", 4).unwrap();
         assert_eq!(entry.location, "/tmp/my\\tools");
     }
 
     #[test]
     /// Ensure comment lines in the store file are ignored by the parser.
     fn parse_entry_line_comment_line_is_ignored() {
-        assert!(parse_entry_line("# layout: <location> <name> <autoset?>", 1).is_none());
+        assert!(parse_entry_line("# layout: <location> [<name>] (<options>)", 1).is_none());
         assert!(parse_entry_line("   # user note", 2).is_none());
     }
 
@@ -1099,7 +1122,7 @@ mod tests {
             autoset: true,
             line_number: 0,
         };
-        assert_eq!(format_entry_line(&auto), "/tmp/a a auto");
+        assert_eq!(format_entry_line(&auto), "/tmp/a [a] (auto)");
 
         let noauto = PathEntry {
             location: "/tmp/b".to_string(),
@@ -1107,7 +1130,7 @@ mod tests {
             autoset: false,
             line_number: 0,
         };
-        assert_eq!(format_entry_line(&noauto), "/tmp/b b noauto");
+        assert_eq!(format_entry_line(&noauto), "/tmp/b [b] (noauto)");
     }
 
     #[test]
@@ -1119,7 +1142,7 @@ mod tests {
             autoset: true,
             line_number: 0,
         };
-        assert_eq!(format_entry_line(&spaced), "/tmp/my\\ tools tools auto");
+        assert_eq!(format_entry_line(&spaced), "/tmp/my\\ tools [tools] (auto)");
 
         let backslash = PathEntry {
             location: "/tmp/my\\tools".to_string(),
@@ -1127,6 +1150,9 @@ mod tests {
             autoset: true,
             line_number: 0,
         };
-        assert_eq!(format_entry_line(&backslash), "/tmp/my\\\\tools tools auto");
+        assert_eq!(
+            format_entry_line(&backslash),
+            "/tmp/my\\\\tools [tools] (auto)"
+        );
     }
 }

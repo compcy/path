@@ -41,7 +41,7 @@ fn default_store_file_is_home_dot_path() {
     cmd.assert().success();
 
     let contents = fs::read_to_string(home.join(".path")).unwrap();
-    assert!(contents.contains("/tmp/home-default homeentry auto"));
+    assert!(contents.contains("/tmp/home-default [homeentry] (auto)"));
 }
 
 /// Creating a new store file should write a first-line layout comment.
@@ -61,8 +61,11 @@ fn add_writes_layout_comment_when_creating_store_file() {
 
     let contents = fs::read_to_string(store).unwrap();
     let mut lines = contents.lines();
-    assert_eq!(lines.next(), Some("# layout: <location> <name> <autoset?>"));
-    assert_eq!(lines.next(), Some("/tmp/layout layout auto"));
+    assert_eq!(
+        lines.next(),
+        Some("# layout: <location> [<name>] (<options>)")
+    );
+    assert_eq!(lines.next(), Some("/tmp/layout [layout] (auto)"));
 }
 
 /// The store-file option is long-only; `-f` is reserved for future use.
@@ -137,7 +140,7 @@ fn add_with_name_and_prepend() {
 
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp/y yname auto"));
+    assert!(contents.contains("/tmp/y [yname] (auto)"));
 }
 
 /// Adding a location containing spaces should be stored and exported correctly.
@@ -175,7 +178,7 @@ fn add_with_spaced_location_round_trips_through_store_and_output() {
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
     let escaped_canonical = canonical.replace('\\', "\\\\").replace(' ', "\\ ");
-    assert!(contents.contains(&format!("{} mytools auto", escaped_canonical)));
+    assert!(contents.contains(&format!("{} [mytools] (auto)", escaped_canonical)));
 
     let mut cmd2 = cargo::cargo_bin_cmd!("path");
     cmd2.current_dir(dir)
@@ -242,7 +245,7 @@ fn list_shows_noauto_status() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/opt/auto a auto\n/opt/no n noauto\n").unwrap();
+    fs::write(&store, "/opt/auto [a] (auto)\n/opt/no [n] (noauto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -393,7 +396,7 @@ fn duplicate_names_are_rejected() {
     // verify that only the first entry was stored
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp myname auto"));
+    assert!(contents.contains("/tmp [myname] (auto)"));
     assert!(!contents.contains("/usr/local/bin"));
 }
 
@@ -646,7 +649,7 @@ fn delete_removes_store_entry_by_name() {
 
     let contents = fs::read_to_string(store).unwrap();
     assert!(!contents.contains("/tmp\thome"));
-    assert!(contents.contains("/usr/bin sys auto"));
+    assert!(contents.contains("/usr/bin [sys] (auto)"));
 }
 
 /// `remove` by path should match both canonicalized and raw PATH segments.
@@ -839,7 +842,7 @@ fn list_normalizes_trailing_slash_from_store_file() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/opt/tools/ tools auto\n").unwrap();
+    fs::write(&store, "/opt/tools/ [tools] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -931,7 +934,7 @@ fn add_with_noauto_stores_noauto_marker() {
 
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp/noauto noautoentry noauto"));
+    assert!(contents.contains("/tmp/noauto [noautoentry] (noauto)"));
 }
 
 /// `list` should decode escaped spaces in stored locations.
@@ -940,7 +943,7 @@ fn list_decodes_escaped_spaces_in_location() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/opt/my\\ tools tools auto\n").unwrap();
+    fs::write(&store, "/opt/my\\ tools [tools] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -966,7 +969,7 @@ fn load_adds_only_auto_entries() {
     let store = dir.join(".path");
     fs::write(
         &store,
-        "/opt/auto1 a1 auto\n/opt/noauto n1 noauto\n/opt/auto2 a2 auto\n",
+        "/opt/auto1 [a1] (auto)\n/opt/noauto [n1] (noauto)\n/opt/auto2 [a2] (auto)\n",
     )
     .unwrap();
 

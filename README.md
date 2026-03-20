@@ -134,11 +134,11 @@ path add .path
 
 Entries are persisted to `$HOME/.path` by default (or the file passed with
 `--file`), but only for entries where you supplied an explicit name. New lines are written as
-`location name autoset?` with fields separated by whitespace, where autoset is
-`auto` or `noauto`.
-If the third field is missing, it is treated as `auto`. (Because a name is
-mandatory the tool will refuse to start if it finds a line missing that
-field.) A trailing `/` on stored paths is normalized away while reading
+`location [name] (options)` with fields separated by whitespace, where options
+currently use `auto` or `noauto`.
+If the third field is missing, it is treated as `auto`. (The name field is
+mandatory, and the tool refuses to start if it finds a line without a valid
+name.) A trailing `/` on stored paths is normalized away while reading
 (except for `/`). The tool reads and writes this file
 automatically when adding.
 
@@ -146,7 +146,7 @@ When a stored location contains whitespace (or `\`), it is escaped with `\`
 so the file remains whitespace-delimited. For example:
 
 ```text
-/opt/my\ tools tools auto
+/opt/my\ tools [tools] (auto)
 ```
 
 You can also install a release build and invoke it directly:
