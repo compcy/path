@@ -41,7 +41,7 @@ fn default_store_file_is_home_dot_path() {
     cmd.assert().success();
 
     let contents = fs::read_to_string(home.join(".path")).unwrap();
-    assert!(contents.contains("/tmp/home-default [homeentry] (auto)"));
+    assert!(contents.contains("'/tmp/home-default' [homeentry] (auto)"));
 }
 
 /// Creating a new store file should write a first-line layout comment.
@@ -63,9 +63,9 @@ fn add_writes_layout_comment_when_creating_store_file() {
     let mut lines = contents.lines();
     assert_eq!(
         lines.next(),
-        Some("# layout: <location> [<name>] (<options>)")
+        Some("# layout: '<location>' [<name>] (<options>)")
     );
-    assert_eq!(lines.next(), Some("/tmp/layout [layout] (auto)"));
+    assert_eq!(lines.next(), Some("'/tmp/layout' [layout] (auto)"));
 }
 
 /// The store-file option is long-only; `-f` is reserved for future use.
@@ -140,7 +140,7 @@ fn add_with_name_and_prepend() {
 
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp/y [yname] (auto,pre)"));
+    assert!(contents.contains("'/tmp/y' [yname] (auto,pre)"));
 }
 
 /// Adding a location containing spaces should be stored and exported correctly.
@@ -177,8 +177,8 @@ fn add_with_spaced_location_round_trips_through_store_and_output() {
 
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
-    let escaped_canonical = canonical.replace('\\', "\\\\").replace(' ', "\\ ");
-    assert!(contents.contains(&format!("{} [mytools] (auto)", escaped_canonical)));
+    let escaped_canonical = canonical.replace('\\', "\\\\").replace('\'', "\\'");
+    assert!(contents.contains(&format!("'{}' [mytools] (auto)", escaped_canonical)));
 
     let mut cmd2 = cargo::cargo_bin_cmd!("path");
     cmd2.current_dir(dir)
@@ -245,7 +245,7 @@ fn list_shows_noauto_status() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/opt/auto [a] (auto)\n/opt/no [n] (noauto)\n").unwrap();
+    fs::write(&store, "'/opt/auto' [a] (auto)\n'/opt/no' [n] (noauto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -318,7 +318,11 @@ fn invalid_entries_are_warned_about() {
     let dir = temp.path();
     let store = dir.join(".path");
     // write one invalid and one valid line
-    fs::write(&store, "/no/such/thing [bad] (auto)\n/tmp [tmp] (auto)\n").unwrap();
+    fs::write(
+        &store,
+        "'/no/such/thing' [bad] (auto)\n'/tmp' [tmp] (auto)\n",
+    )
+    .unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -334,7 +338,7 @@ fn invalid_entries_are_warned_about() {
     // store file should remain unchanged
     let contents = fs::read_to_string(store).unwrap();
     assert!(contents.contains("/no/such/thing"));
-    assert!(contents.contains("/tmp [tmp] (auto)"));
+    assert!(contents.contains("'/tmp' [tmp] (auto)"));
 }
 
 /// Entries without a name (either explicitly empty or because the line
@@ -348,7 +352,7 @@ fn nameless_entry_causes_error() {
     // one line uses an unwrapped name, the other has no field separator
     fs::write(
         &store,
-        "/some/path bad (auto)\n/foo/foo\n/foo [foo] (auto)\n",
+        "'/some/path' bad (auto)\n'/foo/foo'\n'/foo' [foo] (auto)\n",
     )
     .unwrap();
 
@@ -368,7 +372,7 @@ fn nameless_entry_causes_error() {
     let contents = fs::read_to_string(store).unwrap();
     assert!(contents.contains("/some/path"));
     assert!(contents.contains("/foo/foo"));
-    assert!(contents.contains("/foo [foo] (auto)"));
+    assert!(contents.contains("'/foo' [foo] (auto)"));
 }
 
 /// Attempting to add an entry with a name that already exists should fail.
@@ -400,7 +404,7 @@ fn duplicate_names_are_rejected() {
     // verify that only the first entry was stored
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp [myname] (auto)"));
+    assert!(contents.contains("'/tmp' [myname] (auto)"));
     assert!(!contents.contains("/usr/local/bin"));
 }
 
@@ -414,7 +418,7 @@ fn duplicate_names_in_file_cause_error() {
     // write two entries with the same name "dup"
     fs::write(
         &store,
-        "/foo/a [dup] (auto)\n/foo/b [dup] (auto)\n/foo/c [unique] (auto)\n",
+        "'/foo/a' [dup] (auto)\n'/foo/b' [dup] (auto)\n'/foo/c' [unique] (auto)\n",
     )
     .unwrap();
 
@@ -429,9 +433,9 @@ fn duplicate_names_in_file_cause_error() {
     assert!(stderr.contains("lines: 1, 2"));
     // file should remain untouched
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/foo/a [dup] (auto)"));
-    assert!(contents.contains("/foo/b [dup] (auto)"));
-    assert!(contents.contains("/foo/c [unique] (auto)"));
+    assert!(contents.contains("'/foo/a' [dup] (auto)"));
+    assert!(contents.contains("'/foo/b' [dup] (auto)"));
+    assert!(contents.contains("'/foo/c' [unique] (auto)"));
 }
 
 /// Names with non-alphanumeric characters should be rejected.
@@ -462,7 +466,7 @@ fn invalid_names_in_file_cause_error() {
     // write an entry with an invalid name (contains a dash)
     fs::write(
         &store,
-        "/foo/a [valid123] (auto)\n/foo/b [invalid-name] (auto)\n",
+        "'/foo/a' [valid123] (auto)\n'/foo/b' [invalid-name] (auto)\n",
     )
     .unwrap();
 
@@ -619,7 +623,7 @@ fn remove_keeps_store_entries() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/tmp [home] (auto)\n").unwrap();
+    fs::write(&store, "'/tmp' [home] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -640,7 +644,7 @@ fn remove_keeps_store_entries() {
 
     // store entry should remain
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp [home] (auto)"));
+    assert!(contents.contains("'/tmp' [home] (auto)"));
 }
 
 /// `delete` should remove the matching entry from `.path` by name.
@@ -649,7 +653,7 @@ fn delete_removes_store_entry_by_name() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/tmp [home] (auto)\n/usr/bin [sys] (auto)\n").unwrap();
+    fs::write(&store, "'/tmp' [home] (auto)\n'/usr/bin' [sys] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -660,8 +664,8 @@ fn delete_removes_store_entry_by_name() {
     cmd.assert().success();
 
     let contents = fs::read_to_string(store).unwrap();
-    assert!(!contents.contains("/tmp [home] (auto)"));
-    assert!(contents.contains("/usr/bin [sys] (auto)"));
+    assert!(!contents.contains("'/tmp' [home] (auto)"));
+    assert!(contents.contains("'/usr/bin' [sys] (auto)"));
 }
 
 /// `remove` by path should match both canonicalized and raw PATH segments.
@@ -854,7 +858,7 @@ fn list_normalizes_trailing_slash_from_store_file() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/opt/tools/ [tools] (auto)\n").unwrap();
+    fs::write(&store, "'/opt/tools/' [tools] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -879,7 +883,7 @@ fn relative_stored_location_causes_error() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "./rel [rel] (auto)\n").unwrap();
+    fs::write(&store, "'./rel' [rel] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -897,7 +901,7 @@ fn noncanonical_stored_location_causes_error() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/tmp/../tmp [bad] (auto)\n").unwrap();
+    fs::write(&store, "'/tmp/../tmp' [bad] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -915,7 +919,7 @@ fn stored_location_with_colon_causes_error() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/tmp:evil [bad] (auto)\n").unwrap();
+    fs::write(&store, "'/tmp:evil' [bad] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -933,162 +937,162 @@ fn list_rejects_delimiter_malicious_cases() {
     let cases = [
         (
             "parentheses in location",
-            "/tmp/(evil) [bad] (auto)\n",
+            "'/tmp/(evil)' [bad] (auto)\n",
             "error: invalid stored location '/tmp/(evil)'",
         ),
         (
             "asymmetric open parenthesis in location",
-            "/tmp/(evil [bad] (auto)\n",
+            "'/tmp/(evil' [bad] (auto)\n",
             "error: invalid stored location '/tmp/(evil'",
         ),
         (
             "asymmetric close parenthesis in location",
-            "/tmp/evil) [bad] (auto)\n",
+            "'/tmp/evil)' [bad] (auto)\n",
             "error: invalid stored location '/tmp/evil)'",
         ),
         (
             "braces in location",
-            "/tmp/{evil} [bad] (auto)\n",
+            "'/tmp/{evil}' [bad] (auto)\n",
             "error: invalid stored location '/tmp/{evil}'",
         ),
         (
             "asymmetric open brace in location",
-            "/tmp/{evil [bad] (auto)\n",
+            "'/tmp/{evil' [bad] (auto)\n",
             "error: invalid stored location '/tmp/{evil'",
         ),
         (
             "asymmetric close brace in location",
-            "/tmp/evil} [bad] (auto)\n",
+            "'/tmp/evil}' [bad] (auto)\n",
             "error: invalid stored location '/tmp/evil}'",
         ),
         (
             "square brackets in location",
-            "/tmp/[evil] [bad] (auto)\n",
+            "'/tmp/[evil]' [bad] (auto)\n",
             "error: invalid stored location '/tmp/[evil]'",
         ),
         (
             "asymmetric open bracket in location",
-            "/tmp/[evil [bad] (auto)\n",
+            "'/tmp/[evil' [bad] (auto)\n",
             "error: invalid stored location '/tmp/[evil'",
         ),
         (
             "asymmetric close bracket in location",
-            "/tmp/evil] [bad] (auto)\n",
+            "'/tmp/evil]' [bad] (auto)\n",
             "error: invalid stored location '/tmp/evil]'",
         ),
         (
             "escaped close bracket in location",
-            "/tmp/evil\\] [bad] (auto)\n",
+            "'/tmp/evil\\]' [bad] (auto)\n",
             "error: invalid stored location '/tmp/evil]'",
         ),
         (
             "escaped close parenthesis in location",
-            "/tmp/evil\\) [bad] (auto)\n",
+            "'/tmp/evil\\)' [bad] (auto)\n",
             "error: invalid stored location '/tmp/evil)'",
         ),
         (
             "escaped close brace in location",
-            "/tmp/evil\\} [bad] (auto)\n",
+            "'/tmp/evil\\}' [bad] (auto)\n",
             "error: invalid stored location '/tmp/evil}'",
         ),
         (
             "name contains open bracket",
-            "/tmp/safe [bad[] (auto)\n",
+            "'/tmp/safe' [bad[] (auto)\n",
             "error: invalid name 'bad['",
         ),
         (
             "name contains close bracket",
-            "/tmp/safe [bad]] (auto)\n",
+            "'/tmp/safe' [bad]] (auto)\n",
             "error: invalid name 'bad]'",
         ),
         (
             "name contains open parenthesis",
-            "/tmp/safe [ba(d)] (auto)\n",
+            "'/tmp/safe' [ba(d)] (auto)\n",
             "error: invalid name 'ba(d)'",
         ),
         (
             "name contains close parenthesis",
-            "/tmp/safe [ba)d] (auto)\n",
+            "'/tmp/safe' [ba)d] (auto)\n",
             "error: invalid name 'ba)d'",
         ),
         (
             "name contains open brace",
-            "/tmp/safe [ba{d}] (auto)\n",
+            "'/tmp/safe' [ba{d}] (auto)\n",
             "error: invalid name 'ba{d}'",
         ),
         (
             "name contains close brace",
-            "/tmp/safe [ba}d] (auto)\n",
+            "'/tmp/safe' [ba}d] (auto)\n",
             "error: invalid name 'ba}d'",
         ),
         (
             "name missing closing bracket",
-            "/tmp/safe [safe (auto)\n",
+            "'/tmp/safe' [safe (auto)\n",
             "error: found nameless entry",
         ),
         (
             "name missing opening bracket",
-            "/tmp/safe safe] (auto)\n",
+            "'/tmp/safe' safe] (auto)\n",
             "error: found nameless entry",
         ),
         (
             "name empty brackets",
-            "/tmp/safe [] (auto)\n",
+            "'/tmp/safe' [] (auto)\n",
             "error: found nameless entry",
         ),
         (
             "options contain open bracket",
-            "/tmp/safe [safe] (a[uto)\n",
+            "'/tmp/safe' [safe] (a[uto)\n",
             "error: found nameless entry",
         ),
         (
             "options contain close bracket",
-            "/tmp/safe [safe] (a]uto)\n",
+            "'/tmp/safe' [safe] (a]uto)\n",
             "error: found nameless entry",
         ),
         (
             "options contain open parenthesis",
-            "/tmp/safe [safe] (a(uto)\n",
+            "'/tmp/safe' [safe] (a(uto)\n",
             "error: found nameless entry",
         ),
         (
             "options contain close parenthesis",
-            "/tmp/safe [safe] (a)uto)\n",
+            "'/tmp/safe' [safe] (a)uto)\n",
             "error: found nameless entry",
         ),
         (
             "options contain open brace",
-            "/tmp/safe [safe] (a{uto)\n",
+            "'/tmp/safe' [safe] (a{uto)\n",
             "error: found nameless entry",
         ),
         (
             "options contain close brace",
-            "/tmp/safe [safe] (a}uto)\n",
+            "'/tmp/safe' [safe] (a}uto)\n",
             "error: found nameless entry",
         ),
         (
             "options nested braces token",
-            "/tmp/safe [safe] (auto,{pre})\n",
+            "'/tmp/safe' [safe] (auto,{pre})\n",
             "error: found nameless entry",
         ),
         (
             "options nested brackets token",
-            "/tmp/safe [safe] (auto,[pre])\n",
+            "'/tmp/safe' [safe] (auto,[pre])\n",
             "error: found nameless entry",
         ),
         (
             "options nested parentheses token",
-            "/tmp/safe [safe] (auto,(pre))\n",
+            "'/tmp/safe' [safe] (auto,(pre))\n",
             "error: found nameless entry",
         ),
         (
             "options missing closing parenthesis",
-            "/tmp/safe [safe] (auto\n",
+            "'/tmp/safe' [safe] (auto\n",
             "error: found nameless entry",
         ),
         (
             "options missing opening parenthesis",
-            "/tmp/safe [safe] auto)\n",
+            "'/tmp/safe' [safe] auto)\n",
             "error: found nameless entry",
         ),
     ];
@@ -1135,16 +1139,16 @@ fn add_with_noauto_stores_noauto_marker() {
 
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp/noauto [noautoentry] (noauto)"));
+    assert!(contents.contains("'/tmp/noauto' [noautoentry] (noauto)"));
 }
 
-/// `list` should decode escaped spaces in stored locations.
+/// `list` should read quoted locations containing literal spaces.
 #[test]
-fn list_decodes_escaped_spaces_in_location() {
+fn list_reads_quoted_location_with_spaces() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/opt/my\\ tools [tools] (auto)\n").unwrap();
+    fs::write(&store, "'/opt/my tools' [tools] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -1170,7 +1174,7 @@ fn load_adds_only_auto_entries() {
     let store = dir.join(".path");
     fs::write(
         &store,
-        "/opt/auto1 [a1] (auto)\n/opt/noauto [n1] (noauto)\n/opt/auto2 [a2] (auto)\n",
+        "'/opt/auto1' [a1] (auto)\n'/opt/noauto' [n1] (noauto)\n'/opt/auto2' [a2] (auto)\n",
     )
     .unwrap();
 
@@ -1199,7 +1203,11 @@ fn load_respects_pre_option_with_post_default() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/opt/pre [p] (auto,pre)\n/opt/post [q] (auto)\n").unwrap();
+    fs::write(
+        &store,
+        "'/opt/pre' [p] (auto,pre)\n'/opt/post' [q] (auto)\n",
+    )
+    .unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -1242,7 +1250,7 @@ fn load_treats_blank_third_field_as_auto() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/opt/manual [manual]\n").unwrap();
+    fs::write(&store, "'/opt/manual' [manual]\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -1269,7 +1277,7 @@ fn verify_reports_success_when_entries_are_valid() {
     let store = dir.join(".path");
 
     let location = dir.to_string_lossy();
-    fs::write(&store, format!("{} [valid] (auto)\n", location)).unwrap();
+    fs::write(&store, format!("'{}' [valid] (auto)\n", location)).unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -1293,7 +1301,7 @@ fn verify_surfaces_validation_failures() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/foo/a [dup] (auto)\n/foo/b [dup] (auto)\n").unwrap();
+    fs::write(&store, "'/foo/a' [dup] (auto)\n'/foo/b' [dup] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)

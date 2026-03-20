@@ -23,7 +23,7 @@ struct PathEntry {
 }
 
 const DEFAULT_STORE_FILE_NAME: &str = ".path";
-const STORE_FILE_LAYOUT_COMMENT: &str = "# layout: <location> [<name>] (<options>)";
+const STORE_FILE_LAYOUT_COMMENT: &str = "# layout: '<location>' [<name>] (<options>)";
 
 /// Return the default store file path.
 ///
@@ -46,10 +46,9 @@ fn resolve_store_file_path(matches: &ArgMatches) -> PathBuf {
 
 /// Parse a line from the store file.
 ///
-/// Preferred format is `<location> [<name>] (<options>)` with fields separated
-/// by whitespace. To preserve embedded whitespace within fields, any
-/// whitespace and `\\` characters are escaped with `\\` (for example
-/// `/tmp/my\ tools`).
+/// Preferred format is `'<location>' [<name>] (<options>)` with fields separated
+/// by whitespace. Locations are wrapped in single quotes to make delimiter
+/// boundaries explicit.
 ///
 /// `name` is wrapped in `[]` and options are wrapped in `()`.
 ///
@@ -61,6 +60,37 @@ fn parse_autoset_value(value: &str) -> Option<bool> {
         "noauto" => Some(false),
         _ => None,
     }
+}
+
+/// Decode a stored location field wrapped in single quotes.
+fn parse_location_field(value: &str) -> Option<String> {
+    let inner = value
+        .strip_prefix('\'')
+        .and_then(|location| location.strip_suffix('\''))?;
+
+    let mut decoded = String::with_capacity(inner.len());
+    let mut escaped = false;
+
+    for character in inner.chars() {
+        if escaped {
+            decoded.push(character);
+            escaped = false;
+            continue;
+        }
+
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+
+        decoded.push(character);
+    }
+
+    if escaped {
+        return None;
+    }
+
+    Some(decoded)
 }
 
 /// Decode a stored name field.
@@ -103,7 +133,7 @@ fn parse_entry_options(value: &str) -> Option<(bool, bool)> {
             "pre" => prepend = true,
             "post" => prepend = false,
             other => {
-                eprintln!("warning: invalid entry option '{}', ignoring", other);
+                eprintln!("warning: invalid entry option '{}', rejecting entry", other);
                 return None;
             }
         }
@@ -112,60 +142,35 @@ fn parse_entry_options(value: &str) -> Option<(bool, bool)> {
     Some((autoset, prepend))
 }
 
-/// Split a whitespace-delimited line while honoring backslash escapes.
+/// Split a store line into fields while keeping a quoted location token intact.
 fn store_field_regex() -> &'static Regex {
     static FIELD_RE: OnceLock<Regex> = OnceLock::new();
     FIELD_RE.get_or_init(|| {
-        Regex::new(r"(?:\\.|[^\s\\]|\\)+").expect("store field regex should be valid")
+        Regex::new(r"'(?:\\.|[^'\\])*'|(?:\\.|[^\s\\]|\\)+")
+            .expect("store field regex should be valid")
     })
 }
 
-/// Decode backslash escapes in a single store field.
-fn unescape_store_field(field: &str) -> String {
-    let mut decoded = String::with_capacity(field.len());
-    let mut escaped = false;
-
-    for character in field.chars() {
-        if escaped {
-            decoded.push(character);
-            escaped = false;
-            continue;
-        }
-
-        if character == '\\' {
-            escaped = true;
-            continue;
-        }
-
-        decoded.push(character);
-    }
-
-    if escaped {
-        // Preserve a trailing backslash as a literal character.
-        decoded.push('\\');
-    }
-
-    decoded
-}
-
-/// Split a whitespace-delimited line into escaped fields using a regex tokenizer.
-fn split_escaped_whitespace_fields(line: &str) -> Vec<String> {
+/// Split a store line into raw fields using a regex tokenizer.
+fn split_store_fields(line: &str) -> Vec<String> {
     store_field_regex()
         .find_iter(line)
-        .map(|m| unescape_store_field(m.as_str()))
+        .map(|m| m.as_str().to_string())
         .collect()
 }
 
-/// Escape store fields so they can be written as whitespace-delimited tokens.
-fn escape_store_field(field: &str) -> String {
-    let mut escaped = String::with_capacity(field.len());
+/// Quote and escape a stored location field.
+fn quote_store_location_field(field: &str) -> String {
+    let mut quoted = String::with_capacity(field.len() + 2);
+    quoted.push('\'');
     for character in field.chars() {
-        if character == '\\' || character.is_whitespace() {
-            escaped.push('\\');
+        if character == '\\' || character == '\'' {
+            quoted.push('\\');
         }
-        escaped.push(character);
+        quoted.push(character);
     }
-    escaped
+    quoted.push('\'');
+    quoted
 }
 
 fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
@@ -181,43 +186,34 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
         return None;
     }
 
-    let parts = split_escaped_whitespace_fields(line);
+    let parts = split_store_fields(line);
 
     let entry = match parts.as_slice() {
-        [location, name] => match parse_name_field(name) {
-            Some(name) => PathEntry {
-                location: strip_trailing_slash(location),
-                name,
-                autoset: true,
-                prepend: false,
-                line_number,
-            },
-            None => {
-                eprintln!(
-                    "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
-                    line_number
-                );
-                PathEntry {
-                    location: strip_trailing_slash(location),
-                    name: String::new(),
+        [location, name] => {
+            let parsed_location = parse_location_field(location);
+            let parsed_name = parse_name_field(name);
+            match (parsed_location, parsed_name) {
+                (Some(location), Some(name)) => PathEntry {
+                    location: strip_trailing_slash(&location),
+                    name,
                     autoset: true,
                     prepend: false,
                     line_number,
-                }
-            }
-        },
-        [location, name, options] => {
-            let parsed_name = parse_name_field(name);
-            let parsed_options = parse_entry_options(options);
-            match (parsed_name, parsed_options) {
-                (Some(name), Some((autoset, prepend))) => PathEntry {
-                    location: strip_trailing_slash(location),
-                    name,
-                    autoset,
-                    prepend,
-                    line_number,
                 },
                 (None, _) => {
+                    eprintln!(
+                        "warning: malformed entry at line {}: location must be wrapped in single quotes",
+                        line_number
+                    );
+                    PathEntry {
+                        location: strip_trailing_slash(location),
+                        name: String::new(),
+                        autoset: true,
+                        prepend: false,
+                        line_number,
+                    }
+                }
+                (_, None) => {
                     eprintln!(
                         "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
                         line_number
@@ -230,7 +226,47 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         line_number,
                     }
                 }
-                (_, None) => {
+            }
+        }
+        [location, name, options] => {
+            let parsed_location = parse_location_field(location);
+            let parsed_name = parse_name_field(name);
+            let parsed_options = parse_entry_options(options);
+            match (parsed_location, parsed_name, parsed_options) {
+                (Some(location), Some(name), Some((autoset, prepend))) => PathEntry {
+                    location: strip_trailing_slash(&location),
+                    name,
+                    autoset,
+                    prepend,
+                    line_number,
+                },
+                (None, _, _) => {
+                    eprintln!(
+                        "warning: malformed entry at line {}: location must be wrapped in single quotes",
+                        line_number
+                    );
+                    PathEntry {
+                        location: strip_trailing_slash(location),
+                        name: String::new(),
+                        autoset: true,
+                        prepend: false,
+                        line_number,
+                    }
+                }
+                (_, None, _) => {
+                    eprintln!(
+                        "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
+                        line_number
+                    );
+                    PathEntry {
+                        location: strip_trailing_slash(location),
+                        name: String::new(),
+                        autoset: true,
+                        prepend: false,
+                        line_number,
+                    }
+                }
+                (_, _, None) => {
                     eprintln!(
                         "warning: malformed entry at line {}: options must be wrapped in '(' and ')'",
                         line_number
@@ -260,7 +296,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
         }
         _ => {
             eprintln!(
-                "warning: malformed entry at line {}: expected '<location> [<name>] (<options>)' (or omit options to default to auto/post); escape spaces as '\\ '",
+                "warning: malformed entry at line {}: expected '<location>' [<name>] (<options>) (or omit options to default to auto/post); escape single quotes in location as \\\\'",
                 line_number
             );
             PathEntry {
@@ -286,7 +322,7 @@ fn format_entry_line(entry: &PathEntry) -> String {
     };
     format!(
         "{} [{}] ({})",
-        escape_store_field(&entry.location),
+        quote_store_location_field(&entry.location),
         entry.name,
         options
     )
@@ -1026,7 +1062,7 @@ mod tests {
     #[test]
     /// Verify three-field lines are parsed into all struct fields.
     fn parse_entry_line_parses_three_fields() {
-        let entry = parse_entry_line("/tmp/tools/ [tools] (noauto)", 7).unwrap();
+        let entry = parse_entry_line("'/tmp/tools/' [tools] (noauto)", 7).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "tools");
         assert!(!entry.autoset);
@@ -1197,7 +1233,7 @@ mod tests {
     #[test]
     /// Ensure missing third fields are interpreted as `auto` for manual edits.
     fn parse_entry_line_missing_third_field_defaults_to_auto() {
-        let entry = parse_entry_line("/tmp/tools [tools]", 2).unwrap();
+        let entry = parse_entry_line("'/tmp/tools' [tools]", 2).unwrap();
         assert!(entry.autoset);
         assert!(!entry.prepend);
     }
@@ -1205,7 +1241,7 @@ mod tests {
     #[test]
     /// Ensure `(pre)` enables prepend while defaulting autoset to `auto`.
     fn parse_entry_line_pre_option_enables_prepend() {
-        let entry = parse_entry_line("/tmp/tools [tools] (pre)", 2).unwrap();
+        let entry = parse_entry_line("'/tmp/tools' [tools] (pre)", 2).unwrap();
         assert!(entry.autoset);
         assert!(entry.prepend);
     }
@@ -1213,7 +1249,7 @@ mod tests {
     #[test]
     /// Ensure comma-delimited options parse both autoset and prepend settings.
     fn parse_entry_line_combined_options_parse() {
-        let entry = parse_entry_line("/tmp/tools [tools] (noauto,pre)", 2).unwrap();
+        let entry = parse_entry_line("'/tmp/tools' [tools] (noauto,pre)", 2).unwrap();
         assert!(!entry.autoset);
         assert!(entry.prepend);
     }
@@ -1221,48 +1257,48 @@ mod tests {
     #[test]
     /// Ensure options containing braces are rejected as malformed.
     fn parse_entry_line_options_with_braces_are_rejected() {
-        let entry = parse_entry_line("/tmp/tools [tools] (auto,{pre})", 2).unwrap();
+        let entry = parse_entry_line("'/tmp/tools' [tools] (auto,{pre})", 2).unwrap();
         assert_eq!(entry.name, "");
     }
 
     #[test]
     /// Ensure options containing nested parentheses are rejected as malformed.
     fn parse_entry_line_options_with_nested_parentheses_are_rejected() {
-        let entry = parse_entry_line("/tmp/tools [tools] (auto,(pre))", 2).unwrap();
+        let entry = parse_entry_line("'/tmp/tools' [tools] (auto,(pre))", 2).unwrap();
         assert_eq!(entry.name, "");
     }
 
     #[test]
     /// Ensure asymmetric bracket delimiters in names are rejected.
     fn parse_entry_line_name_with_asymmetric_brackets_is_rejected() {
-        let missing_close = parse_entry_line("/tmp/tools [tools (auto)", 2).unwrap();
+        let missing_close = parse_entry_line("'/tmp/tools' [tools (auto)", 2).unwrap();
         assert_eq!(missing_close.name, "");
 
-        let missing_open = parse_entry_line("/tmp/tools tools] (auto)", 3).unwrap();
+        let missing_open = parse_entry_line("'/tmp/tools' tools] (auto)", 3).unwrap();
         assert_eq!(missing_open.name, "");
     }
 
     #[test]
     /// Ensure asymmetric parenthesis delimiters in options are rejected.
     fn parse_entry_line_options_with_asymmetric_parentheses_are_rejected() {
-        let missing_close = parse_entry_line("/tmp/tools [tools] (auto", 2).unwrap();
+        let missing_close = parse_entry_line("'/tmp/tools' [tools] (auto", 2).unwrap();
         assert_eq!(missing_close.name, "");
 
-        let missing_open = parse_entry_line("/tmp/tools [tools] auto)", 3).unwrap();
+        let missing_open = parse_entry_line("'/tmp/tools' [tools] auto)", 3).unwrap();
         assert_eq!(missing_open.name, "");
     }
 
     #[test]
     /// Ensure legacy `postfix` placement option is rejected.
     fn parse_entry_line_postfix_option_is_rejected() {
-        let entry = parse_entry_line("/tmp/tools [tools] (postfix)", 2).unwrap();
+        let entry = parse_entry_line("'/tmp/tools' [tools] (postfix)", 2).unwrap();
         assert_eq!(entry.name, "");
     }
 
     #[test]
-    /// Ensure escaped whitespace format preserves spaces in stored locations.
-    fn parse_entry_line_escaped_whitespace_preserves_spaces_in_location() {
-        let entry = parse_entry_line("/tmp/my\\ tools [tools] (auto)", 4).unwrap();
+    /// Ensure quoted locations preserve literal spaces in stored paths.
+    fn parse_entry_line_quoted_location_preserves_spaces() {
+        let entry = parse_entry_line("'/tmp/my tools' [tools] (auto)", 4).unwrap();
         assert_eq!(entry.location, "/tmp/my tools");
         assert_eq!(entry.name, "tools");
         assert!(entry.autoset);
@@ -1272,14 +1308,14 @@ mod tests {
     #[test]
     /// Ensure escaped backslashes are decoded from store lines.
     fn parse_entry_line_decodes_escaped_backslash() {
-        let entry = parse_entry_line("/tmp/my\\\\tools [tools] (auto)", 4).unwrap();
+        let entry = parse_entry_line("'/tmp/my\\\\tools' [tools] (auto)", 4).unwrap();
         assert_eq!(entry.location, "/tmp/my\\tools");
     }
 
     #[test]
     /// Ensure comment lines in the store file are ignored by the parser.
     fn parse_entry_line_comment_line_is_ignored() {
-        assert!(parse_entry_line("# layout: <location> [<name>] (<options>)", 1).is_none());
+        assert!(parse_entry_line("# layout: '<location>' [<name>] (<options>)", 1).is_none());
         assert!(parse_entry_line("   # user note", 2).is_none());
     }
 
@@ -1302,7 +1338,7 @@ mod tests {
             prepend: false,
             line_number: 0,
         };
-        assert_eq!(format_entry_line(&auto), "/tmp/a [a] (auto)");
+        assert_eq!(format_entry_line(&auto), "'/tmp/a' [a] (auto)");
 
         let noauto = PathEntry {
             location: "/tmp/b".to_string(),
@@ -1311,7 +1347,7 @@ mod tests {
             prepend: false,
             line_number: 0,
         };
-        assert_eq!(format_entry_line(&noauto), "/tmp/b [b] (noauto)");
+        assert_eq!(format_entry_line(&noauto), "'/tmp/b' [b] (noauto)");
 
         let pre = PathEntry {
             location: "/tmp/c".to_string(),
@@ -1320,12 +1356,12 @@ mod tests {
             prepend: true,
             line_number: 0,
         };
-        assert_eq!(format_entry_line(&pre), "/tmp/c [c] (auto,pre)");
+        assert_eq!(format_entry_line(&pre), "'/tmp/c' [c] (auto,pre)");
     }
 
     #[test]
-    /// Ensure serializer escapes whitespace and backslashes in fields.
-    fn format_entry_line_escapes_location_whitespace() {
+    /// Ensure serializer quotes locations and escapes backslashes as needed.
+    fn format_entry_line_quotes_location_and_escapes_backslashes() {
         let spaced = PathEntry {
             location: "/tmp/my tools".to_string(),
             name: "tools".to_string(),
@@ -1333,7 +1369,7 @@ mod tests {
             prepend: false,
             line_number: 0,
         };
-        assert_eq!(format_entry_line(&spaced), "/tmp/my\\ tools [tools] (auto)");
+        assert_eq!(format_entry_line(&spaced), "'/tmp/my tools' [tools] (auto)");
 
         let backslash = PathEntry {
             location: "/tmp/my\\tools".to_string(),
@@ -1344,7 +1380,7 @@ mod tests {
         };
         assert_eq!(
             format_entry_line(&backslash),
-            "/tmp/my\\\\tools [tools] (auto)"
+            "'/tmp/my\\\\tools' [tools] (auto)"
         );
     }
 }
