@@ -593,6 +593,15 @@ fn is_store_location_canonical_like(location: &str) -> bool {
         return false;
     }
 
+    // Disallow store syntax delimiters in locations to reduce parser ambiguity
+    // and reject crafted entries with metacharacters.
+    if location
+        .chars()
+        .any(|character| matches!(character, '[' | ']' | '(' | ')' | '{' | '}'))
+    {
+        return false;
+    }
+
     if location != "/" && location.ends_with('/') {
         return false;
     }
@@ -1101,6 +1110,13 @@ mod tests {
         assert!(!is_store_location_canonical_like("/usr//local/bin"));
         assert!(!is_store_location_canonical_like("/usr/../local/bin"));
         assert!(!is_store_location_canonical_like("/usr/local/bin/"));
+        assert!(!is_store_location_canonical_like("/tmp/[evil]"));
+        assert!(!is_store_location_canonical_like("/tmp/evil]"));
+        assert!(!is_store_location_canonical_like("/tmp/[evil"));
+        assert!(!is_store_location_canonical_like("/tmp/(evil)"));
+        assert!(!is_store_location_canonical_like("/tmp/evil("));
+        assert!(!is_store_location_canonical_like("/tmp/evil)"));
+        assert!(!is_store_location_canonical_like("/tmp/{evil}"));
     }
 
     #[test]
@@ -1200,6 +1216,40 @@ mod tests {
         let entry = parse_entry_line("/tmp/tools [tools] (noauto,pre)", 2).unwrap();
         assert!(!entry.autoset);
         assert!(entry.prepend);
+    }
+
+    #[test]
+    /// Ensure options containing braces are rejected as malformed.
+    fn parse_entry_line_options_with_braces_are_rejected() {
+        let entry = parse_entry_line("/tmp/tools [tools] (auto,{pre})", 2).unwrap();
+        assert_eq!(entry.name, "");
+    }
+
+    #[test]
+    /// Ensure options containing nested parentheses are rejected as malformed.
+    fn parse_entry_line_options_with_nested_parentheses_are_rejected() {
+        let entry = parse_entry_line("/tmp/tools [tools] (auto,(pre))", 2).unwrap();
+        assert_eq!(entry.name, "");
+    }
+
+    #[test]
+    /// Ensure asymmetric bracket delimiters in names are rejected.
+    fn parse_entry_line_name_with_asymmetric_brackets_is_rejected() {
+        let missing_close = parse_entry_line("/tmp/tools [tools (auto)", 2).unwrap();
+        assert_eq!(missing_close.name, "");
+
+        let missing_open = parse_entry_line("/tmp/tools tools] (auto)", 3).unwrap();
+        assert_eq!(missing_open.name, "");
+    }
+
+    #[test]
+    /// Ensure asymmetric parenthesis delimiters in options are rejected.
+    fn parse_entry_line_options_with_asymmetric_parentheses_are_rejected() {
+        let missing_close = parse_entry_line("/tmp/tools [tools] (auto", 2).unwrap();
+        assert_eq!(missing_close.name, "");
+
+        let missing_open = parse_entry_line("/tmp/tools [tools] auto)", 3).unwrap();
+        assert_eq!(missing_open.name, "");
     }
 
     #[test]

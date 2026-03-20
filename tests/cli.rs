@@ -927,6 +927,195 @@ fn stored_location_with_colon_causes_error() {
     assert!(stderr.contains("error: invalid stored location '/tmp:evil'"));
 }
 
+/// Delimiter-malicious and asymmetrical store-file cases should be rejected.
+#[test]
+fn list_rejects_delimiter_malicious_cases() {
+    let cases = [
+        (
+            "parentheses in location",
+            "/tmp/(evil) [bad] (auto)\n",
+            "error: invalid stored location '/tmp/(evil)'",
+        ),
+        (
+            "asymmetric open parenthesis in location",
+            "/tmp/(evil [bad] (auto)\n",
+            "error: invalid stored location '/tmp/(evil'",
+        ),
+        (
+            "asymmetric close parenthesis in location",
+            "/tmp/evil) [bad] (auto)\n",
+            "error: invalid stored location '/tmp/evil)'",
+        ),
+        (
+            "braces in location",
+            "/tmp/{evil} [bad] (auto)\n",
+            "error: invalid stored location '/tmp/{evil}'",
+        ),
+        (
+            "asymmetric open brace in location",
+            "/tmp/{evil [bad] (auto)\n",
+            "error: invalid stored location '/tmp/{evil'",
+        ),
+        (
+            "asymmetric close brace in location",
+            "/tmp/evil} [bad] (auto)\n",
+            "error: invalid stored location '/tmp/evil}'",
+        ),
+        (
+            "square brackets in location",
+            "/tmp/[evil] [bad] (auto)\n",
+            "error: invalid stored location '/tmp/[evil]'",
+        ),
+        (
+            "asymmetric open bracket in location",
+            "/tmp/[evil [bad] (auto)\n",
+            "error: invalid stored location '/tmp/[evil'",
+        ),
+        (
+            "asymmetric close bracket in location",
+            "/tmp/evil] [bad] (auto)\n",
+            "error: invalid stored location '/tmp/evil]'",
+        ),
+        (
+            "escaped close bracket in location",
+            "/tmp/evil\\] [bad] (auto)\n",
+            "error: invalid stored location '/tmp/evil]'",
+        ),
+        (
+            "escaped close parenthesis in location",
+            "/tmp/evil\\) [bad] (auto)\n",
+            "error: invalid stored location '/tmp/evil)'",
+        ),
+        (
+            "escaped close brace in location",
+            "/tmp/evil\\} [bad] (auto)\n",
+            "error: invalid stored location '/tmp/evil}'",
+        ),
+        (
+            "name contains open bracket",
+            "/tmp/safe [bad[] (auto)\n",
+            "error: invalid name 'bad['",
+        ),
+        (
+            "name contains close bracket",
+            "/tmp/safe [bad]] (auto)\n",
+            "error: invalid name 'bad]'",
+        ),
+        (
+            "name contains open parenthesis",
+            "/tmp/safe [ba(d)] (auto)\n",
+            "error: invalid name 'ba(d)'",
+        ),
+        (
+            "name contains close parenthesis",
+            "/tmp/safe [ba)d] (auto)\n",
+            "error: invalid name 'ba)d'",
+        ),
+        (
+            "name contains open brace",
+            "/tmp/safe [ba{d}] (auto)\n",
+            "error: invalid name 'ba{d}'",
+        ),
+        (
+            "name contains close brace",
+            "/tmp/safe [ba}d] (auto)\n",
+            "error: invalid name 'ba}d'",
+        ),
+        (
+            "name missing closing bracket",
+            "/tmp/safe [safe (auto)\n",
+            "error: found nameless entry",
+        ),
+        (
+            "name missing opening bracket",
+            "/tmp/safe safe] (auto)\n",
+            "error: found nameless entry",
+        ),
+        (
+            "name empty brackets",
+            "/tmp/safe [] (auto)\n",
+            "error: found nameless entry",
+        ),
+        (
+            "options contain open bracket",
+            "/tmp/safe [safe] (a[uto)\n",
+            "error: found nameless entry",
+        ),
+        (
+            "options contain close bracket",
+            "/tmp/safe [safe] (a]uto)\n",
+            "error: found nameless entry",
+        ),
+        (
+            "options contain open parenthesis",
+            "/tmp/safe [safe] (a(uto)\n",
+            "error: found nameless entry",
+        ),
+        (
+            "options contain close parenthesis",
+            "/tmp/safe [safe] (a)uto)\n",
+            "error: found nameless entry",
+        ),
+        (
+            "options contain open brace",
+            "/tmp/safe [safe] (a{uto)\n",
+            "error: found nameless entry",
+        ),
+        (
+            "options contain close brace",
+            "/tmp/safe [safe] (a}uto)\n",
+            "error: found nameless entry",
+        ),
+        (
+            "options nested braces token",
+            "/tmp/safe [safe] (auto,{pre})\n",
+            "error: found nameless entry",
+        ),
+        (
+            "options nested brackets token",
+            "/tmp/safe [safe] (auto,[pre])\n",
+            "error: found nameless entry",
+        ),
+        (
+            "options nested parentheses token",
+            "/tmp/safe [safe] (auto,(pre))\n",
+            "error: found nameless entry",
+        ),
+        (
+            "options missing closing parenthesis",
+            "/tmp/safe [safe] (auto\n",
+            "error: found nameless entry",
+        ),
+        (
+            "options missing opening parenthesis",
+            "/tmp/safe [safe] auto)\n",
+            "error: found nameless entry",
+        ),
+    ];
+
+    for (label, line, expected_stderr) in cases {
+        let temp = tempdir().unwrap();
+        let dir = temp.path();
+        let store = dir.join(".path");
+        fs::write(&store, line).unwrap();
+
+        let mut cmd = cargo::cargo_bin_cmd!("path");
+        cmd.current_dir(dir)
+            .arg("--file")
+            .arg(dir.join(".path"))
+            .env("PATH", "");
+        let assert = cmd.arg("list").assert().failure();
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+        assert!(
+            stderr.contains(expected_stderr),
+            "case '{}' expected stderr to contain '{}', got: {}",
+            label,
+            expected_stderr,
+            stderr
+        );
+    }
+}
+
 /// Adding with `--noauto` should persist `noauto` in the third field.
 #[test]
 fn add_with_noauto_stores_noauto_marker() {
