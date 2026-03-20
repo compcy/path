@@ -18,6 +18,7 @@ struct PathEntry {
     location: String,
     name: String,
     autoset: bool,
+    prepend: bool,
     line_number: usize,
 }
 
@@ -50,42 +51,65 @@ fn resolve_store_file_path(matches: &ArgMatches) -> PathBuf {
 /// whitespace and `\\` characters are escaped with `\\` (for example
 /// `/tmp/my\ tools`).
 ///
-/// `name` is wrapped in `[]` and options are wrapped in `()`. For backward
-/// compatibility, legacy unwrapped tokens are also accepted.
+/// `name` is wrapped in `[]` and options are wrapped in `()`.
 ///
-/// `autoset` options are `auto` or `noauto`; missing or blank autoset values
-/// are treated as `auto`.
-fn parse_autoset_value(value: &str) -> bool {
+/// `autoset` options are `auto` or `noauto`; placement options are `pre` or
+/// `post`. Missing or blank options default to `auto` plus post.
+fn parse_autoset_value(value: &str) -> Option<bool> {
     match value {
-        "" | "auto" => true,
-        "noauto" => false,
-        other => {
-            eprintln!(
-                "warning: invalid autoset value '{}', defaulting to auto",
-                other
-            );
-            true
-        }
+        "auto" => Some(true),
+        "noauto" => Some(false),
+        _ => None,
     }
 }
 
-/// Decode a stored name field, accepting both `[name]` and legacy `name`.
-fn parse_name_field(value: &str) -> String {
+/// Decode a stored name field.
+fn parse_name_field(value: &str) -> Option<String> {
     value
         .strip_prefix('[')
         .and_then(|inner| inner.strip_suffix(']'))
-        .unwrap_or(value)
-        .to_string()
+        .map(|name| name.to_string())
 }
 
-/// Decode autoset options, accepting both `(auto)`/`(noauto)` and legacy tokens.
-fn parse_autoset_field(value: &str) -> bool {
+/// Decode entry options from the third field.
+///
+/// Supported options include autoset (`auto`/`noauto`) and placement
+/// (`pre`/`post`). Options may be comma-delimited and wrapped in `()`.
+/// Unknown options are rejected and make the entry malformed.
+fn parse_entry_options(value: &str) -> Option<(bool, bool)> {
     let normalized = value
         .strip_prefix('(')
-        .and_then(|inner| inner.strip_suffix(')'))
-        .unwrap_or(value)
+        .and_then(|inner| inner.strip_suffix(')'))?
         .trim();
-    parse_autoset_value(normalized)
+
+    if normalized.is_empty() {
+        return Some((true, false));
+    }
+
+    let mut autoset = true;
+    let mut prepend = false;
+
+    for option in normalized
+        .split(',')
+        .map(str::trim)
+        .filter(|opt| !opt.is_empty())
+    {
+        if let Some(parsed_autoset) = parse_autoset_value(option) {
+            autoset = parsed_autoset;
+            continue;
+        }
+
+        match option {
+            "pre" => prepend = true,
+            "post" => prepend = false,
+            other => {
+                eprintln!("warning: invalid entry option '{}', ignoring", other);
+                return None;
+            }
+        }
+    }
+
+    Some((autoset, prepend))
 }
 
 /// Split a whitespace-delimited line while honoring backslash escapes.
@@ -160,18 +184,67 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
     let parts = split_escaped_whitespace_fields(line);
 
     let entry = match parts.as_slice() {
-        [location, name] => PathEntry {
-            location: strip_trailing_slash(location),
-            name: parse_name_field(name),
-            autoset: true,
-            line_number,
+        [location, name] => match parse_name_field(name) {
+            Some(name) => PathEntry {
+                location: strip_trailing_slash(location),
+                name,
+                autoset: true,
+                prepend: false,
+                line_number,
+            },
+            None => {
+                eprintln!(
+                    "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
+                    line_number
+                );
+                PathEntry {
+                    location: strip_trailing_slash(location),
+                    name: String::new(),
+                    autoset: true,
+                    prepend: false,
+                    line_number,
+                }
+            }
         },
-        [location, name, autoset] => PathEntry {
-            location: strip_trailing_slash(location),
-            name: parse_name_field(name),
-            autoset: parse_autoset_field(autoset),
-            line_number,
-        },
+        [location, name, options] => {
+            let parsed_name = parse_name_field(name);
+            let parsed_options = parse_entry_options(options);
+            match (parsed_name, parsed_options) {
+                (Some(name), Some((autoset, prepend))) => PathEntry {
+                    location: strip_trailing_slash(location),
+                    name,
+                    autoset,
+                    prepend,
+                    line_number,
+                },
+                (None, _) => {
+                    eprintln!(
+                        "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
+                        line_number
+                    );
+                    PathEntry {
+                        location: strip_trailing_slash(location),
+                        name: String::new(),
+                        autoset: true,
+                        prepend: false,
+                        line_number,
+                    }
+                }
+                (_, None) => {
+                    eprintln!(
+                        "warning: malformed entry at line {}: options must be wrapped in '(' and ')'",
+                        line_number
+                    );
+                    PathEntry {
+                        location: strip_trailing_slash(location),
+                        name: String::new(),
+                        autoset: true,
+                        prepend: false,
+                        line_number,
+                    }
+                }
+            }
+        }
         [location] => {
             eprintln!(
                 "warning: malformed entry at line {}: missing required name field",
@@ -181,18 +254,20 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                 location: strip_trailing_slash(location),
                 name: String::new(),
                 autoset: true,
+                prepend: false,
                 line_number,
             }
         }
         _ => {
             eprintln!(
-                "warning: malformed entry at line {}: expected 2-3 fields; escape spaces as '\\ '",
+                "warning: malformed entry at line {}: expected '<location> [<name>] (<options>)' (or omit options to default to auto/post); escape spaces as '\\ '",
                 line_number
             );
             PathEntry {
                 location: strip_trailing_slash(trimmed),
                 name: String::new(),
                 autoset: true,
+                prepend: false,
                 line_number,
             }
         }
@@ -204,11 +279,16 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
 /// Serialize an entry back into a line.
 fn format_entry_line(entry: &PathEntry) -> String {
     let autoset = if entry.autoset { "auto" } else { "noauto" };
+    let options = if entry.prepend {
+        format!("{},pre", autoset)
+    } else {
+        autoset.to_string()
+    };
     format!(
         "{} [{}] ({})",
         escape_store_field(&entry.location),
         entry.name,
-        autoset
+        options
     )
 }
 
@@ -588,10 +668,17 @@ fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -
 /// Format a stored entry for human-readable list output.
 fn format_list_entry(entry: &PathEntry) -> String {
     let autoset_marker = if entry.autoset { "auto" } else { "noauto" };
+    let placement_suffix = if entry.prepend { ",pre" } else { "" };
     if entry.name != entry.location {
-        format!("{} ({}) [{}]", entry.location, entry.name, autoset_marker)
+        format!(
+            "{} ({}) [{}{}]",
+            entry.location, entry.name, autoset_marker, placement_suffix
+        )
     } else {
-        format!("{} [{}]", entry.location, autoset_marker)
+        format!(
+            "{} [{}{}]",
+            entry.location, autoset_marker, placement_suffix
+        )
     }
 }
 
@@ -602,6 +689,7 @@ fn format_list_entry(entry: &PathEntry) -> String {
 fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
     let mut location = add_matches.value_of("location").unwrap().to_string();
     let mut resolved_by_name = false;
+    let prepend = add_matches.is_present("pre");
 
     match load_entries(store_file) {
         Ok(entries) => {
@@ -678,6 +766,7 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
                     location: location.clone(),
                     name,
                     autoset,
+                    prepend,
                     line_number: 0,
                 });
 
@@ -694,7 +783,6 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
         }
     }
 
-    let prepend = add_matches.is_present("pre");
     let current = env::var("PATH").unwrap_or_default();
 
     let should_add = !path_contains_segment(&current, &location);
@@ -820,7 +908,8 @@ fn handle_list(store_file: &Path) {
 
 /// Handle the `load` subcommand.
 ///
-/// This appends all entries marked `auto` in the configured store file to PATH, skipping
+/// This applies all entries marked `auto` in the configured store file to PATH,
+/// prepending entries marked `pre` and appending all others, while skipping
 /// entries already present as exact path segments.
 fn handle_load(store_file: &Path) {
     let entries = match load_entries(store_file) {
@@ -834,7 +923,7 @@ fn handle_load(store_file: &Path) {
     let mut current = env::var("PATH").unwrap_or_default();
     for entry in entries.into_iter().filter(|entry| entry.autoset) {
         if !path_contains_segment(&current, &entry.location) {
-            current = compose_path(&current, &entry.location, false);
+            current = compose_path(&current, &entry.location, entry.prepend);
         }
     }
 
@@ -932,16 +1021,18 @@ mod tests {
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "tools");
         assert!(!entry.autoset);
+        assert!(!entry.prepend);
         assert_eq!(entry.line_number, 7);
     }
 
     #[test]
-    /// Ensure older tab-delimited lines are still supported.
-    fn parse_entry_line_legacy_tab_delimited_still_parses() {
+    /// Ensure unwrapped legacy field formats are rejected.
+    fn parse_entry_line_legacy_unwrapped_fields_are_rejected() {
         let entry = parse_entry_line("/tmp/tools\ttools\tnoauto", 8).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
-        assert_eq!(entry.name, "tools");
-        assert!(!entry.autoset);
+        assert_eq!(entry.name, "");
+        assert!(entry.autoset);
+        assert!(!entry.prepend);
     }
 
     #[test]
@@ -951,6 +1042,7 @@ mod tests {
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "");
         assert!(entry.autoset);
+        assert!(!entry.prepend);
     }
 
     #[test]
@@ -1045,6 +1137,7 @@ mod tests {
             location: "/usr/local/bin".to_string(),
             name: "tools".to_string(),
             autoset: true,
+            prepend: false,
             line_number: 1,
         }];
         assert_eq!(
@@ -1061,6 +1154,7 @@ mod tests {
             location: "/usr/local/bin".to_string(),
             name: "tools".to_string(),
             autoset: true,
+            prepend: false,
             line_number: 0,
         };
         assert_eq!(format_list_entry(&entry), "/usr/local/bin (tools) [auto]");
@@ -1069,9 +1163,19 @@ mod tests {
             location: "/usr/bin".to_string(),
             name: "/usr/bin".to_string(),
             autoset: false,
+            prepend: false,
             line_number: 0,
         };
         assert_eq!(format_list_entry(&same), "/usr/bin [noauto]");
+
+        let pre = PathEntry {
+            location: "/opt/pre".to_string(),
+            name: "pre".to_string(),
+            autoset: true,
+            prepend: true,
+            line_number: 0,
+        };
+        assert_eq!(format_list_entry(&pre), "/opt/pre (pre) [auto,pre]");
     }
 
     #[test]
@@ -1079,6 +1183,30 @@ mod tests {
     fn parse_entry_line_missing_third_field_defaults_to_auto() {
         let entry = parse_entry_line("/tmp/tools [tools]", 2).unwrap();
         assert!(entry.autoset);
+        assert!(!entry.prepend);
+    }
+
+    #[test]
+    /// Ensure `(pre)` enables prepend while defaulting autoset to `auto`.
+    fn parse_entry_line_pre_option_enables_prepend() {
+        let entry = parse_entry_line("/tmp/tools [tools] (pre)", 2).unwrap();
+        assert!(entry.autoset);
+        assert!(entry.prepend);
+    }
+
+    #[test]
+    /// Ensure comma-delimited options parse both autoset and prepend settings.
+    fn parse_entry_line_combined_options_parse() {
+        let entry = parse_entry_line("/tmp/tools [tools] (noauto,pre)", 2).unwrap();
+        assert!(!entry.autoset);
+        assert!(entry.prepend);
+    }
+
+    #[test]
+    /// Ensure legacy `postfix` placement option is rejected.
+    fn parse_entry_line_postfix_option_is_rejected() {
+        let entry = parse_entry_line("/tmp/tools [tools] (postfix)", 2).unwrap();
+        assert_eq!(entry.name, "");
     }
 
     #[test]
@@ -1088,6 +1216,7 @@ mod tests {
         assert_eq!(entry.location, "/tmp/my tools");
         assert_eq!(entry.name, "tools");
         assert!(entry.autoset);
+        assert!(!entry.prepend);
     }
 
     #[test]
@@ -1120,6 +1249,7 @@ mod tests {
             location: "/tmp/a".to_string(),
             name: "a".to_string(),
             autoset: true,
+            prepend: false,
             line_number: 0,
         };
         assert_eq!(format_entry_line(&auto), "/tmp/a [a] (auto)");
@@ -1128,9 +1258,19 @@ mod tests {
             location: "/tmp/b".to_string(),
             name: "b".to_string(),
             autoset: false,
+            prepend: false,
             line_number: 0,
         };
         assert_eq!(format_entry_line(&noauto), "/tmp/b [b] (noauto)");
+
+        let pre = PathEntry {
+            location: "/tmp/c".to_string(),
+            name: "c".to_string(),
+            autoset: true,
+            prepend: true,
+            line_number: 0,
+        };
+        assert_eq!(format_entry_line(&pre), "/tmp/c [c] (auto,pre)");
     }
 
     #[test]
@@ -1140,6 +1280,7 @@ mod tests {
             location: "/tmp/my tools".to_string(),
             name: "tools".to_string(),
             autoset: true,
+            prepend: false,
             line_number: 0,
         };
         assert_eq!(format_entry_line(&spaced), "/tmp/my\\ tools [tools] (auto)");
@@ -1148,6 +1289,7 @@ mod tests {
             location: "/tmp/my\\tools".to_string(),
             name: "tools".to_string(),
             autoset: true,
+            prepend: false,
             line_number: 0,
         };
         assert_eq!(

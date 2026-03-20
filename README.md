@@ -87,6 +87,7 @@ Global option:
   - Only entries with an explicit `name` are written to the configured store file.
   - Existing PATH entries are not duplicated for equivalent trailing-slash forms (for example `/usr/local/bin` and `/usr/local/bin/`).
 - `path add --pre <location-or-name> [name]` — prepend instead of append
+  - When `name` is provided, the stored entry records `pre` in its options so `path load` will prepend it in future shells.
 - `path remove <location-or-name>` — remove from PATH only
   - If the argument matches a stored short name, its location is removed from PATH.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`).
@@ -95,7 +96,9 @@ Global option:
   - If the argument matches a stored short name, that entry is deleted.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`), and matching stored locations are deleted.
 - `path list` — show all saved entries from the configured store file
-- `path load` — append all stored entries marked `auto` to PATH
+- `path load` — apply all stored entries marked `auto` to PATH
+  - Entries with option `pre` are prepended.
+  - Entries without `pre` are appended (post behavior by default).
   - This runs automatically when `path-wrapper.sh` is sourced (for example at shell startup from your rc file).
 - `path verify` — validate configured store entries and print `Path file is valid.` when validation passes
   - If the configured store file does not exist or has no entries, it fails.
@@ -135,7 +138,9 @@ path add .path
 Entries are persisted to `$HOME/.path` by default (or the file passed with
 `--file`), but only for entries where you supplied an explicit name. New lines are written as
 `location [name] (options)` with fields separated by whitespace, where options
-currently use `auto` or `noauto`.
+can include `auto` or `noauto`, and optional placement `pre`.
+If `pre` is not specified, `post` (append) behavior is assumed.
+Older unwrapped forms such as `location name auto` are treated as malformed.
 If the third field is missing, it is treated as `auto`. (The name field is
 mandatory, and the tool refuses to start if it finds a line without a valid
 name.) A trailing `/` on stored paths is normalized away while reading
@@ -147,6 +152,7 @@ so the file remains whitespace-delimited. For example:
 
 ```text
 /opt/my\ tools [tools] (auto)
+/opt/my\ tools [tools] (auto,pre)
 ```
 
 You can also install a release build and invoke it directly:

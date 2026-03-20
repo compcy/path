@@ -140,7 +140,7 @@ fn add_with_name_and_prepend() {
 
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp/y [yname] (auto)"));
+    assert!(contents.contains("/tmp/y [yname] (auto,pre)"));
 }
 
 /// Adding a location containing spaces should be stored and exported correctly.
@@ -318,7 +318,7 @@ fn invalid_entries_are_warned_about() {
     let dir = temp.path();
     let store = dir.join(".path");
     // write one invalid and one valid line
-    fs::write(&store, "/no/such/thing\tbad\n/tmp\ttmp\n").unwrap();
+    fs::write(&store, "/no/such/thing [bad] (auto)\n/tmp [tmp] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -334,7 +334,7 @@ fn invalid_entries_are_warned_about() {
     // store file should remain unchanged
     let contents = fs::read_to_string(store).unwrap();
     assert!(contents.contains("/no/such/thing"));
-    assert!(contents.contains("/tmp\ttmp"));
+    assert!(contents.contains("/tmp [tmp] (auto)"));
 }
 
 /// Entries without a name (either explicitly empty or because the line
@@ -345,8 +345,12 @@ fn nameless_entry_causes_error() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    // one line has an empty name, the other has no field separator
-    fs::write(&store, "/some/path\t\n/foo/foo\n/foo\tfoo\n").unwrap();
+    // one line uses an unwrapped name, the other has no field separator
+    fs::write(
+        &store,
+        "/some/path bad (auto)\n/foo/foo\n/foo [foo] (auto)\n",
+    )
+    .unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -364,7 +368,7 @@ fn nameless_entry_causes_error() {
     let contents = fs::read_to_string(store).unwrap();
     assert!(contents.contains("/some/path"));
     assert!(contents.contains("/foo/foo"));
-    assert!(contents.contains("/foo\tfoo"));
+    assert!(contents.contains("/foo [foo] (auto)"));
 }
 
 /// Attempting to add an entry with a name that already exists should fail.
@@ -408,7 +412,11 @@ fn duplicate_names_in_file_cause_error() {
     let dir = temp.path();
     let store = dir.join(".path");
     // write two entries with the same name "dup"
-    fs::write(&store, "/foo/a\tdup\n/foo/b\tdup\n/foo/c\tunique\n").unwrap();
+    fs::write(
+        &store,
+        "/foo/a [dup] (auto)\n/foo/b [dup] (auto)\n/foo/c [unique] (auto)\n",
+    )
+    .unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -421,9 +429,9 @@ fn duplicate_names_in_file_cause_error() {
     assert!(stderr.contains("lines: 1, 2"));
     // file should remain untouched
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/foo/a\tdup"));
-    assert!(contents.contains("/foo/b\tdup"));
-    assert!(contents.contains("/foo/c\tunique"));
+    assert!(contents.contains("/foo/a [dup] (auto)"));
+    assert!(contents.contains("/foo/b [dup] (auto)"));
+    assert!(contents.contains("/foo/c [unique] (auto)"));
 }
 
 /// Names with non-alphanumeric characters should be rejected.
@@ -452,7 +460,11 @@ fn invalid_names_in_file_cause_error() {
     let dir = temp.path();
     let store = dir.join(".path");
     // write an entry with an invalid name (contains a dash)
-    fs::write(&store, "/foo/a\tvalid123\n/foo/b\tinvalid-name\n").unwrap();
+    fs::write(
+        &store,
+        "/foo/a [valid123] (auto)\n/foo/b [invalid-name] (auto)\n",
+    )
+    .unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -607,7 +619,7 @@ fn remove_keeps_store_entries() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/tmp\thome\n").unwrap();
+    fs::write(&store, "/tmp [home] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -628,7 +640,7 @@ fn remove_keeps_store_entries() {
 
     // store entry should remain
     let contents = fs::read_to_string(store).unwrap();
-    assert!(contents.contains("/tmp\thome"));
+    assert!(contents.contains("/tmp [home] (auto)"));
 }
 
 /// `delete` should remove the matching entry from `.path` by name.
@@ -637,7 +649,7 @@ fn delete_removes_store_entry_by_name() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/tmp\thome\n/usr/bin\tsys\n").unwrap();
+    fs::write(&store, "/tmp [home] (auto)\n/usr/bin [sys] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -648,7 +660,7 @@ fn delete_removes_store_entry_by_name() {
     cmd.assert().success();
 
     let contents = fs::read_to_string(store).unwrap();
-    assert!(!contents.contains("/tmp\thome"));
+    assert!(!contents.contains("/tmp [home] (auto)"));
     assert!(contents.contains("/usr/bin [sys] (auto)"));
 }
 
@@ -867,7 +879,7 @@ fn relative_stored_location_causes_error() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "./rel\trel\tauto\n").unwrap();
+    fs::write(&store, "./rel [rel] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -885,7 +897,7 @@ fn noncanonical_stored_location_causes_error() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/tmp/../tmp\tbad\tauto\n").unwrap();
+    fs::write(&store, "/tmp/../tmp [bad] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -903,7 +915,7 @@ fn stored_location_with_colon_causes_error() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/tmp:evil\tbad\tauto\n").unwrap();
+    fs::write(&store, "/tmp:evil [bad] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -992,9 +1004,34 @@ fn load_adds_only_auto_entries() {
     assert!(!out_str.contains("/opt/noauto"));
 }
 
-/// `list` should parse manually edited `.path` lines separated by spaces.
+/// `load` should prepend entries marked `pre`; entries without `pre` are appended.
 #[test]
-fn list_accepts_space_separated_entries() {
+fn load_respects_pre_option_with_post_default() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "/opt/pre [p] (auto,pre)\n/opt/post [q] (auto)\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "/usr/bin");
+    let output = cmd
+        .arg("load")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+
+    assert_eq!(out_str.trim(), "export PATH='/opt/pre:/usr/bin:/opt/post'");
+}
+
+/// `list` should reject legacy unwrapped store lines.
+#[test]
+fn list_rejects_legacy_space_separated_entries() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
@@ -1005,15 +1042,9 @@ fn list_accepts_space_separated_entries() {
         .arg("--file")
         .arg(dir.join(".path"))
         .env("PATH", "");
-    let output = cmd
-        .arg("list")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/opt/tools (tools) [auto]"));
+    let assert = cmd.arg("list").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("error: found nameless entry"));
 }
 
 /// `load` should treat a blank third field as `auto` for manually edited files.
@@ -1022,7 +1053,7 @@ fn load_treats_blank_third_field_as_auto() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/opt/manual\tmanual\t\n").unwrap();
+    fs::write(&store, "/opt/manual [manual]\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -1049,7 +1080,7 @@ fn verify_reports_success_when_entries_are_valid() {
     let store = dir.join(".path");
 
     let location = dir.to_string_lossy();
-    fs::write(&store, format!("{}\tvalid\tauto\n", location)).unwrap();
+    fs::write(&store, format!("{} [valid] (auto)\n", location)).unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
@@ -1073,7 +1104,7 @@ fn verify_surfaces_validation_failures() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
     let store = dir.join(".path");
-    fs::write(&store, "/foo/a\tdup\tauto\n/foo/b\tdup\tauto\n").unwrap();
+    fs::write(&store, "/foo/a [dup] (auto)\n/foo/b [dup] (auto)\n").unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(dir)
