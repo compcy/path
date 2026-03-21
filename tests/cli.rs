@@ -1225,3 +1225,96 @@ fn verify_fails_when_store_file_is_empty() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: store file has no entries"));
 }
+
+/// `list --pretty` should print a header row followed by one line per PATH segment.
+#[test]
+fn list_pretty_shows_header_and_segments() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "/usr/bin:/bin");
+    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+
+    // Header row must be present.
+    assert!(out.contains("PATH"));
+    assert!(out.contains("NAME"));
+
+    // Each PATH segment must appear on its own line.
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.iter().any(|l| l.starts_with("/usr/bin")));
+    assert!(lines.iter().any(|l| l.starts_with("/bin")));
+}
+
+/// `list --pretty` should resolve names from the built-in system path list.
+#[test]
+fn list_pretty_resolves_system_path_names() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "/usr/bin:/bin:/sbin");
+    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+
+    assert!(out.contains("usrbin"));
+    assert!(out.contains("sysbin"));
+    assert!(out.contains("syssbin"));
+}
+
+/// `list --pretty` should resolve names from stored entries in the store file.
+#[test]
+fn list_pretty_resolves_stored_entry_names() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    // Store an entry for /tmp so its name shows up in --pretty output.
+    let mut add_cmd = test_cmd(dir, "");
+    add_cmd.arg("add").arg("/tmp").arg("mytmp");
+    add_cmd.assert().success();
+
+    let mut cmd = test_cmd(dir, "/tmp:/usr/bin");
+    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+
+    // /tmp should appear with its stored name.
+    let tmp_line = out.lines().find(|l| l.starts_with("/tmp")).unwrap();
+    assert!(tmp_line.contains("mytmp"));
+
+    // /usr/bin should appear with its built-in system name.
+    let usrbin_line = out.lines().find(|l| l.starts_with("/usr/bin")).unwrap();
+    assert!(usrbin_line.contains("usrbin"));
+}
+
+/// `list --pretty` should leave the name column blank for unknown PATH segments.
+#[test]
+fn list_pretty_leaves_name_blank_for_unknown_segments() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "/some/unknown/path");
+    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+
+    // The segment must appear.
+    let seg_line = out
+        .lines()
+        .find(|l| l.contains("/some/unknown/path"))
+        .unwrap();
+
+    // After the path, the line should have only trailing whitespace (no name).
+    assert!(
+        seg_line.trim_end().ends_with("/some/unknown/path")
+            || seg_line["/some/unknown/path".len()..].trim().is_empty()
+    );
+}
+
+/// `list --pretty` with an empty PATH should print only header rows.
+#[test]
+fn list_pretty_with_empty_path_prints_only_table_header() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "");
+    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0], "PATH  NAME");
+    assert_eq!(lines[1], "----  ----");
+}

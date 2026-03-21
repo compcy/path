@@ -100,6 +100,20 @@ Global option:
   - If the argument matches a stored short name, that entry is deleted.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`), and matching stored locations are deleted.
 - `path list` — show all saved entries from the configured store file
+- `path list --pretty` — display the current PATH as a formatted two-column table
+  - Each segment of the active PATH is printed on its own line.
+  - Column 1: the directory path.
+  - Column 2: the name, resolved first from the store file, then from the built-in system path list (`sysbin`, `usrbin`, etc.). Blank when no name is known.
+  - Column widths are fitted to the widest value in each column.
+
+  ```
+  PATH                NAME
+  ------------------  -----------
+  /usr/local/bin      usrlocalbin
+  /usr/bin            usrbin
+  /bin                sysbin
+  /home/user/mytools
+  ```
 - `path load` — apply all stored entries marked `auto` to PATH
   - Entries with option `pre` are prepended.
   - Entries without `pre` are appended (post behavior by default).
@@ -136,6 +150,7 @@ path delete home                     # delete stored entry from .path by name
 path load                            # add only entries marked auto (usually automatic at shell startup)
 path verify                          # validate .path contents and report status
 path restore                         # restore built-in protected system paths to PATH
+path list --pretty                   # show current PATH as a two-column table with names
 
 # invalid unless "foo" is a stored name
 path add foo

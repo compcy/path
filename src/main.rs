@@ -601,7 +601,14 @@ fn build_cli() -> App<'static, 'static> {
                 ),
         )
         .subcommand(
-            SubCommand::with_name("list").about("List entries stored in the configured store file"),
+            SubCommand::with_name("list")
+                .about("List entries stored in the configured store file")
+                .arg(
+                    Arg::with_name("pretty")
+                        .long("pretty")
+                        .help("Print PATH entries as a formatted two-column table with names")
+                        .takes_value(false),
+                ),
         )
         .subcommand(
             SubCommand::with_name("load")
@@ -1039,7 +1046,62 @@ fn handle_delete(delete_matches: &ArgMatches, store_file: &Path) {
 }
 
 /// Handle the `list` subcommand by printing all stored entries.
-fn handle_list(store_file: &Path) {
+///
+/// When `--pretty` is given, enumerates the current PATH segments as a
+/// two-column table with names resolved from the store file and the built-in
+/// system path list.
+fn handle_list(list_matches: &ArgMatches, store_file: &Path) {
+    if list_matches.is_present("pretty") {
+        let current = env::var("PATH").unwrap_or_default();
+
+        let entries = load_entries_or_warn(store_file, "failed to load store file for --pretty")
+            .unwrap_or_default();
+
+        let segments: Vec<&str> = if current.is_empty() {
+            Vec::new()
+        } else {
+            current.split(':').collect()
+        };
+
+        let names: Vec<String> = segments
+            .iter()
+            .map(|seg| resolve_segment_name(seg, &entries))
+            .collect();
+
+        let path_col_width = segments
+            .iter()
+            .map(|s| s.len())
+            .max()
+            .unwrap_or(0)
+            .max("PATH".len());
+
+        let name_col_width = names
+            .iter()
+            .map(|n| n.len())
+            .max()
+            .unwrap_or(0)
+            .max("NAME".len());
+
+        println!("{:<path_width$}  NAME", "PATH", path_width = path_col_width);
+        println!(
+            "{:-<path_width$}  {:-<name_width$}",
+            "",
+            "",
+            path_width = path_col_width,
+            name_width = name_col_width
+        );
+
+        for (segment, name) in segments.iter().zip(names.iter()) {
+            println!(
+                "{:<path_width$}  {}",
+                segment,
+                name,
+                path_width = path_col_width
+            );
+        }
+        return;
+    }
+
     let store_exists = store_file.exists();
 
     let entries = load_entries_or_exit(store_file);
@@ -1110,6 +1172,27 @@ fn handle_restore() {
     println!("{}", format_export_path(&current));
 }
 
+/// Resolve the display name for a PATH segment.
+///
+/// Checks stored entries first then falls back to the built-in system path
+/// table.  Returns an empty string when no name is known.
+fn resolve_segment_name(segment: &str, entries: &[PathEntry]) -> String {
+    let normalized = strip_trailing_slash(segment);
+
+    if let Some(entry) = entries
+        .iter()
+        .find(|e| strip_trailing_slash(&e.location) == normalized)
+    {
+        return entry.name.clone();
+    }
+
+    if let Some(system) = find_system_path_by_location(&normalized) {
+        return system.name.to_string();
+    }
+
+    String::new()
+}
+
 /// Print the current PATH value as a shell export statement.
 fn print_current_path() {
     match env::var("PATH") {
@@ -1150,8 +1233,8 @@ fn main() {
         return;
     }
 
-    if matches.subcommand_matches("list").is_some() {
-        handle_list(&store_file);
+    if let Some(list_matches) = matches.subcommand_matches("list") {
+        handle_list(list_matches, &store_file);
         return;
     }
 
