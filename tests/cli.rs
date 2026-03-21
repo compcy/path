@@ -385,7 +385,7 @@ fn duplicate_names_in_file_cause_error() {
     let assert = cmd.arg("list").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: duplicate name 'dup'"));
-    assert!(stderr.contains("lines: 1, 2"));
+    assert!(stderr.contains("lines: 2, 3"));
     // file should remain untouched
     let contents = fs::read_to_string(dir.join(".path")).unwrap();
     assert!(contents.contains("'/foo/a' [dup] (auto)"));

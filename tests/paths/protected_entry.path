@@ -1,1 +1,2 @@
+# layout: '<location>' [<name>] (<options>)
 '/tmp' [home] (auto,protect)

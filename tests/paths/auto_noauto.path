@@ -1,2 +1,3 @@
+# layout: '<location>' [<name>] (<options>)
 '/opt/auto' [a] (auto)
 '/opt/no' [n] (noauto)
