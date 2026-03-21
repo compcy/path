@@ -65,19 +65,21 @@ fn parse_autoset_value(value: &str) -> Option<bool> {
     }
 }
 
-/// Strip matching single-quote delimiters from a field.
-fn unquote_single_quoted(value: &str) -> Option<&str> {
+/// Strip a leading and trailing single quote from a field.
+fn strip_wrapped(value: &str, open: char, close: char) -> Option<&str> {
     value
-        .strip_prefix('\'')
-        .and_then(|inner| inner.strip_suffix('\''))
+        .strip_prefix(open)
+        .and_then(|inner| inner.strip_suffix(close))
+}
+
+/// Strip a leading and trailing single quote from a field.
+fn strip_single_quotes(value: &str) -> Option<&str> {
+    strip_wrapped(value, '\'', '\'')
 }
 
 /// Decode a stored name field.
 fn parse_name_field(value: &str) -> Option<String> {
-    value
-        .strip_prefix('[')
-        .and_then(|inner| inner.strip_suffix(']'))
-        .map(|name| name.to_string())
+    strip_wrapped(value, '[', ']').map(|name| name.to_string())
 }
 
 /// Decode entry options from the third field.
@@ -98,10 +100,7 @@ enum EntryOptionsParseResult {
 /// and wrapped in `()`. Unknown alphabetic option tokens are captured for
 /// validation; malformed option shapes are rejected.
 fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
-    let normalized = match value
-        .strip_prefix('(')
-        .and_then(|inner| inner.strip_suffix(')'))
-    {
+    let normalized = match strip_wrapped(value, '(', ')') {
         Some(raw) => raw.trim(),
         None => return EntryOptionsParseResult::Malformed,
     };
@@ -187,6 +186,40 @@ fn quote_store_location_field(field: &str) -> String {
     format!("'{}'", field)
 }
 
+/// Build a malformed nameless entry with default option values.
+fn malformed_nameless_entry(location: &str, line_number: usize) -> PathEntry {
+    PathEntry {
+        location: strip_trailing_slash(location),
+        name: String::new(),
+        autoset: true,
+        prepend: false,
+        protect: false,
+        invalid_option: None,
+        line_number,
+    }
+}
+
+/// Build a well-formed entry with all explicit fields.
+fn valid_entry(
+    location: &str,
+    name: String,
+    autoset: bool,
+    prepend: bool,
+    protect: bool,
+    invalid_option: Option<String>,
+    line_number: usize,
+) -> PathEntry {
+    PathEntry {
+        location: strip_trailing_slash(location),
+        name,
+        autoset,
+        prepend,
+        protect,
+        invalid_option,
+        line_number,
+    }
+}
+
 fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
     let trimmed = line.trim();
 
@@ -198,52 +231,30 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
 
     let entry = match parts.as_slice() {
         [location, name] => {
-            let parsed_location = unquote_single_quoted(location);
+            let parsed_location = strip_single_quotes(location);
             let parsed_name = parse_name_field(name);
             match (parsed_location, parsed_name) {
-                (Some(location), Some(name)) => PathEntry {
-                    location: strip_trailing_slash(location),
-                    name,
-                    autoset: true,
-                    prepend: false,
-                    protect: false,
-                    invalid_option: None,
-                    line_number,
-                },
+                (Some(location), Some(name)) => {
+                    valid_entry(location, name, true, false, false, None, line_number)
+                }
                 (None, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
                         line_number
                     );
-                    PathEntry {
-                        location: strip_trailing_slash(location),
-                        name: String::new(),
-                        autoset: true,
-                        prepend: false,
-                        protect: false,
-                        invalid_option: None,
-                        line_number,
-                    }
+                    malformed_nameless_entry(location, line_number)
                 }
                 (_, None) => {
                     eprintln!(
                         "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
                         line_number
                     );
-                    PathEntry {
-                        location: strip_trailing_slash(location),
-                        name: String::new(),
-                        autoset: true,
-                        prepend: false,
-                        protect: false,
-                        invalid_option: None,
-                        line_number,
-                    }
+                    malformed_nameless_entry(location, line_number)
                 }
             }
         }
         [location, name, options] => {
-            let parsed_location = unquote_single_quoted(location);
+            let parsed_location = strip_single_quotes(location);
             let parsed_name = parse_name_field(name);
             let parsed_options = parse_entry_options(options);
 
@@ -256,70 +267,38 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         prepend,
                         protect,
                     },
-                ) => PathEntry {
-                    location: strip_trailing_slash(location),
-                    name,
-                    autoset,
-                    prepend,
-                    protect,
-                    invalid_option: None,
-                    line_number,
-                },
+                ) => valid_entry(location, name, autoset, prepend, protect, None, line_number),
                 (Some(location), Some(name), EntryOptionsParseResult::InvalidToken(option)) => {
-                    PathEntry {
-                        location: strip_trailing_slash(location),
+                    valid_entry(
+                        location,
                         name,
-                        autoset: true,
-                        prepend: false,
-                        protect: false,
-                        invalid_option: Some(option),
+                        true,
+                        false,
+                        false,
+                        Some(option),
                         line_number,
-                    }
+                    )
                 }
                 (None, _, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
                         line_number
                     );
-                    PathEntry {
-                        location: strip_trailing_slash(location),
-                        name: String::new(),
-                        autoset: true,
-                        prepend: false,
-                        protect: false,
-                        invalid_option: None,
-                        line_number,
-                    }
+                    malformed_nameless_entry(location, line_number)
                 }
                 (_, None, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
                         line_number
                     );
-                    PathEntry {
-                        location: strip_trailing_slash(location),
-                        name: String::new(),
-                        autoset: true,
-                        prepend: false,
-                        protect: false,
-                        invalid_option: None,
-                        line_number,
-                    }
+                    malformed_nameless_entry(location, line_number)
                 }
                 (_, _, EntryOptionsParseResult::Malformed) => {
                     eprintln!(
                         "warning: malformed entry at line {}: options must be wrapped in '(' and ')'",
                         line_number
                     );
-                    PathEntry {
-                        location: strip_trailing_slash(location),
-                        name: String::new(),
-                        autoset: true,
-                        prepend: false,
-                        protect: false,
-                        invalid_option: None,
-                        line_number,
-                    }
+                    malformed_nameless_entry(location, line_number)
                 }
             }
         }
@@ -328,30 +307,14 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                 "warning: malformed entry at line {}: missing required name field",
                 line_number
             );
-            PathEntry {
-                location: strip_trailing_slash(location),
-                name: String::new(),
-                autoset: true,
-                prepend: false,
-                protect: false,
-                invalid_option: None,
-                line_number,
-            }
+            malformed_nameless_entry(location, line_number)
         }
         _ => {
             eprintln!(
                 "warning: malformed entry at line {}: expected '<location>' [<name>] (<options>) (or omit options to default to auto/post)",
                 line_number
             );
-            PathEntry {
-                location: strip_trailing_slash(trimmed),
-                name: String::new(),
-                autoset: true,
-                prepend: false,
-                protect: false,
-                invalid_option: None,
-                line_number,
-            }
+            malformed_nameless_entry(trimmed, line_number)
         }
     };
 
@@ -385,6 +348,28 @@ fn load_entries(store_file: &Path) -> io::Result<Vec<PathEntry>> {
         }
     }
     Ok(entries)
+}
+
+/// Load entries or print an error and terminate.
+fn load_entries_or_exit(store_file: &Path) -> Vec<PathEntry> {
+    match load_entries(store_file) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!("error: failed to load entries: {}", error);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Load entries or print a warning and continue.
+fn load_entries_or_warn(store_file: &Path, warning_context: &str) -> Option<Vec<PathEntry>> {
+    match load_entries(store_file) {
+        Ok(entries) => Some(entries),
+        Err(error) => {
+            eprintln!("warning: {}: {}", warning_context, error);
+            None
+        }
+    }
 }
 
 /// Validate that a name contains only alphanumeric characters.
@@ -664,6 +649,26 @@ fn canonicalize_relative_cli_argument(path: &str) -> String {
     }
 }
 
+/// Validate a CLI path argument and return its canonicalized form.
+fn validate_and_canonicalize_cli_path_argument(path: &str) -> String {
+    if !is_path_argument_valid(path) {
+        eprintln!("error: path '{}' must be absolute or start with '.'", path);
+        std::process::exit(1);
+    }
+
+    if contains_path_separator(path) {
+        eprintln!("error: path '{}' must not contain ':'", path);
+        std::process::exit(1);
+    }
+
+    if contains_backslash(path) {
+        eprintln!("error: path '{}' must not contain '\\\\'", path);
+        std::process::exit(1);
+    }
+
+    canonicalize_relative_cli_argument(path)
+}
+
 /// Return whether a stored location is absolute and canonical-looking.
 ///
 /// Canonical-looking means it is absolute, contains no `.`/`..` components,
@@ -797,41 +802,18 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
     let mut resolved_by_name = false;
     let prepend = add_matches.is_present("pre");
 
-    match load_entries(store_file) {
-        Ok(entries) => {
-            if let Some(resolved_location) = resolve_location_by_name(&location, &entries) {
-                location = resolved_location;
-                resolved_by_name = true;
-            }
+    if let Some(entries) = load_entries_or_warn(
+        store_file,
+        "failed to load store file, treating argument as path",
+    ) {
+        if let Some(resolved_location) = resolve_location_by_name(&location, &entries) {
+            location = resolved_location;
+            resolved_by_name = true;
         }
-        Err(error) => {
-            eprintln!(
-                "warning: failed to load store file, treating argument as path: {}",
-                error
-            );
-        }
-    }
-
-    if !resolved_by_name && !is_path_argument_valid(&location) {
-        eprintln!(
-            "error: path '{}' must be absolute or start with '.'",
-            location
-        );
-        std::process::exit(1);
-    }
-
-    if !resolved_by_name && contains_path_separator(&location) {
-        eprintln!("error: path '{}' must not contain ':'", location);
-        std::process::exit(1);
-    }
-
-    if !resolved_by_name && contains_backslash(&location) {
-        eprintln!("error: path '{}' must not contain '\\\\'", location);
-        std::process::exit(1);
     }
 
     if !resolved_by_name {
-        location = canonicalize_relative_cli_argument(&location);
+        location = validate_and_canonicalize_cli_path_argument(&location);
     }
 
     if Path::new(&location).exists() {
@@ -859,40 +841,35 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
             std::process::exit(1);
         }
 
-        match load_entries(store_file) {
-            Ok(mut entries) => {
-                if entries.iter().any(|entry| entry.name == name) {
-                    eprintln!("error: name '{}' is already in use", name);
-                    std::process::exit(1);
-                }
-
-                if !is_store_location_canonical_like(&location) {
-                    eprintln!(
-                        "error: cannot store location '{}': stored paths must be absolute, canonical-looking, and must not contain ':'",
-                        location
-                    );
-                    std::process::exit(1);
-                }
-
-                entries.push(PathEntry {
-                    location: location.clone(),
-                    name,
-                    autoset,
-                    prepend,
-                    protect,
-                    invalid_option: None,
-                    line_number: 0,
-                });
-
-                if let Err(error) = save_entries(store_file, &entries) {
-                    eprintln!("warning: failed to update store file: {}", error);
-                }
+        if let Some(mut entries) = load_entries_or_warn(
+            store_file,
+            "failed to load store file, not updating named entries",
+        ) {
+            if entries.iter().any(|entry| entry.name == name) {
+                eprintln!("error: name '{}' is already in use", name);
+                std::process::exit(1);
             }
-            Err(error) => {
+
+            if !is_store_location_canonical_like(&location) {
                 eprintln!(
-                    "warning: failed to load store file, not updating named entries: {}",
-                    error
+                    "error: cannot store location '{}': stored paths must be absolute, canonical-looking, and must not contain ':'",
+                    location
                 );
+                std::process::exit(1);
+            }
+
+            entries.push(PathEntry {
+                location: location.clone(),
+                name,
+                autoset,
+                prepend,
+                protect,
+                invalid_option: None,
+                line_number: 0,
+            });
+
+            if let Err(error) = save_entries(store_file, &entries) {
+                eprintln!("warning: failed to update store file: {}", error);
             }
         }
     }
@@ -936,25 +913,7 @@ fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
 
     let mut raw_path_arg = None;
     if !resolved_by_name {
-        if !is_path_argument_valid(&argument) {
-            eprintln!(
-                "error: path '{}' must be absolute or start with '.'",
-                argument
-            );
-            std::process::exit(1);
-        }
-
-        if contains_path_separator(&argument) {
-            eprintln!("error: path '{}' must not contain ':'", argument);
-            std::process::exit(1);
-        }
-
-        if contains_backslash(&argument) {
-            eprintln!("error: path '{}' must not contain '\\\\'", argument);
-            std::process::exit(1);
-        }
-
-        location_to_remove = canonicalize_relative_cli_argument(&argument);
+        location_to_remove = validate_and_canonicalize_cli_path_argument(&argument);
         raw_path_arg = Some(argument.as_str());
 
         if let Some(entries) = loaded_entries.as_ref() {
@@ -988,36 +947,12 @@ fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
 fn handle_delete(delete_matches: &ArgMatches, store_file: &Path) {
     let argument = delete_matches.value_of("location").unwrap().to_string();
 
-    let mut entries = match load_entries(store_file) {
-        Ok(entries) => entries,
-        Err(error) => {
-            eprintln!("error: failed to load entries: {}", error);
-            std::process::exit(1);
-        }
-    };
+    let mut entries = load_entries_or_exit(store_file);
 
     if let Some(position) = entries.iter().position(|entry| entry.name == argument) {
         entries.remove(position);
     } else {
-        if !is_path_argument_valid(&argument) {
-            eprintln!(
-                "error: path '{}' must be absolute or start with '.'",
-                argument
-            );
-            std::process::exit(1);
-        }
-
-        if contains_path_separator(&argument) {
-            eprintln!("error: path '{}' must not contain ':'", argument);
-            std::process::exit(1);
-        }
-
-        if contains_backslash(&argument) {
-            eprintln!("error: path '{}' must not contain '\\\\'", argument);
-            std::process::exit(1);
-        }
-
-        let location_to_delete = canonicalize_relative_cli_argument(&argument);
+        let location_to_delete = validate_and_canonicalize_cli_path_argument(&argument);
         entries.retain(|entry| entry.location != location_to_delete);
     }
 
@@ -1030,25 +965,18 @@ fn handle_delete(delete_matches: &ArgMatches, store_file: &Path) {
 fn handle_list(store_file: &Path) {
     let store_exists = store_file.exists();
 
-    match load_entries(store_file) {
-        Ok(entries) => {
-            if entries.is_empty() {
-                if store_exists {
-                    println!("No stored entries.");
-                } else {
-                    println!("No stored entries: store file does not exist.");
-                }
-                return;
-            }
+    let entries = load_entries_or_exit(store_file);
+    if entries.is_empty() {
+        if store_exists {
+            println!("No stored entries.");
+        } else {
+            println!("No stored entries: store file does not exist.");
+        }
+        return;
+    }
 
-            for entry in entries {
-                println!("{}", format_list_entry(&entry));
-            }
-        }
-        Err(error) => {
-            eprintln!("error: failed to load entries: {}", error);
-            std::process::exit(1);
-        }
+    for entry in entries {
+        println!("{}", format_list_entry(&entry));
     }
 }
 
@@ -1058,13 +986,7 @@ fn handle_list(store_file: &Path) {
 /// prepending entries marked `pre` and appending all others, while skipping
 /// entries already present as exact path segments.
 fn handle_load(store_file: &Path) {
-    let entries = match load_entries(store_file) {
-        Ok(entries) => entries,
-        Err(error) => {
-            eprintln!("error: failed to load entries: {}", error);
-            std::process::exit(1);
-        }
-    };
+    let entries = load_entries_or_exit(store_file);
 
     let mut current = env::var("PATH").unwrap_or_default();
     for entry in entries.into_iter().filter(|entry| entry.autoset) {
@@ -1086,13 +1008,7 @@ fn handle_verify(store_file: &Path) {
         std::process::exit(1);
     }
 
-    let entries = match load_entries(store_file) {
-        Ok(entries) => entries,
-        Err(error) => {
-            eprintln!("error: failed to load entries: {}", error);
-            std::process::exit(1);
-        }
-    };
+    let entries = load_entries_or_exit(store_file);
 
     if entries.is_empty() {
         eprintln!("error: store file has no entries: {}", store_file.display());
@@ -1160,19 +1076,49 @@ fn main() {
 mod tests {
     use super::*;
 
+    /// Helper to construct a test entry with sensible defaults.
+    fn test_entry(location: &str, name: &str) -> PathEntry {
+        PathEntry {
+            location: location.to_string(),
+            name: name.to_string(),
+            autoset: true,
+            prepend: false,
+            protect: false,
+            invalid_option: None,
+            line_number: 0,
+        }
+    }
+
     #[test]
     /// Ensure single-quoted values are unwrapped correctly.
-    fn unquote_single_quoted_strips_delimiters() {
-        assert_eq!(unquote_single_quoted("'foo'"), Some("foo"));
-        assert_eq!(unquote_single_quoted("''"), Some(""));
+    fn strip_single_quotes_strips_delimiters() {
+        assert_eq!(strip_single_quotes("'foo'"), Some("foo"));
+        assert_eq!(strip_single_quotes("''"), Some(""));
+    }
+
+    #[test]
+    /// Ensure generic wrapped-field stripping handles different delimiters.
+    fn strip_wrapped_strips_matching_delimiters() {
+        assert_eq!(strip_wrapped("'foo'", '\'', '\''), Some("foo"));
+        assert_eq!(strip_wrapped("[name]", '[', ']'), Some("name"));
+        assert_eq!(strip_wrapped("(auto)", '(', ')'), Some("auto"));
+    }
+
+    #[test]
+    /// Ensure generic wrapped-field stripping rejects malformed delimiter shapes.
+    fn strip_wrapped_rejects_invalid_shape() {
+        assert_eq!(strip_wrapped("foo", '\'', '\''), None);
+        assert_eq!(strip_wrapped("'foo", '\'', '\''), None);
+        assert_eq!(strip_wrapped("foo'", '\'', '\''), None);
+        assert_eq!(strip_wrapped("[name)", '[', ']'), None);
     }
 
     #[test]
     /// Ensure malformed or unquoted values are rejected.
-    fn unquote_single_quoted_rejects_invalid_shape() {
-        assert_eq!(unquote_single_quoted("foo"), None);
-        assert_eq!(unquote_single_quoted("'foo"), None);
-        assert_eq!(unquote_single_quoted("foo'"), None);
+    fn strip_single_quotes_rejects_invalid_shape() {
+        assert_eq!(strip_single_quotes("foo"), None);
+        assert_eq!(strip_single_quotes("'foo"), None);
+        assert_eq!(strip_single_quotes("foo'"), None);
     }
 
     #[test]
@@ -1323,15 +1269,9 @@ mod tests {
     #[test]
     /// Verify stored name lookup returns the expected location when present.
     fn resolve_location_by_name_returns_matching_location() {
-        let entries = vec![PathEntry {
-            location: "/usr/local/bin".to_string(),
-            name: "tools".to_string(),
-            autoset: true,
-            prepend: false,
-            protect: false,
-            invalid_option: None,
-            line_number: 1,
-        }];
+        let mut entry = test_entry("/usr/local/bin", "tools");
+        entry.line_number = 1;
+        let entries = vec![entry];
         assert_eq!(
             resolve_location_by_name("tools", &entries),
             Some("/usr/local/bin".to_string())
@@ -1342,48 +1282,19 @@ mod tests {
     #[test]
     /// Ensure list formatting mirrors store layout with unquoted locations.
     fn format_list_entry_includes_name_when_different() {
-        let entry = PathEntry {
-            location: "/usr/local/bin".to_string(),
-            name: "tools".to_string(),
-            autoset: true,
-            prepend: false,
-            protect: false,
-            invalid_option: None,
-            line_number: 0,
-        };
+        let entry = test_entry("/usr/local/bin", "tools");
         assert_eq!(format_list_entry(&entry), "/usr/local/bin [tools] (auto)");
 
-        let same = PathEntry {
-            location: "/usr/bin".to_string(),
-            name: "/usr/bin".to_string(),
-            autoset: false,
-            prepend: false,
-            protect: false,
-            invalid_option: None,
-            line_number: 0,
-        };
+        let mut same = test_entry("/usr/bin", "/usr/bin");
+        same.autoset = false;
         assert_eq!(format_list_entry(&same), "/usr/bin [/usr/bin] (noauto)");
 
-        let pre = PathEntry {
-            location: "/opt/pre".to_string(),
-            name: "pre".to_string(),
-            autoset: true,
-            prepend: true,
-            protect: false,
-            invalid_option: None,
-            line_number: 0,
-        };
+        let mut pre = test_entry("/opt/pre", "pre");
+        pre.prepend = true;
         assert_eq!(format_list_entry(&pre), "/opt/pre [pre] (auto,pre)");
 
-        let protect = PathEntry {
-            location: "/opt/protect".to_string(),
-            name: "protect".to_string(),
-            autoset: true,
-            prepend: false,
-            protect: true,
-            invalid_option: None,
-            line_number: 0,
-        };
+        let mut protect = test_entry("/opt/protect", "protect");
+        protect.protect = true;
         assert_eq!(
             format_list_entry(&protect),
             "/opt/protect [protect] (auto,protect)"
@@ -1504,74 +1415,29 @@ mod tests {
     #[test]
     /// Ensure entry serialization writes explicit `auto` and `noauto` markers.
     fn format_entry_line_writes_auto_markers() {
-        let auto = PathEntry {
-            location: "/tmp/a".to_string(),
-            name: "a".to_string(),
-            autoset: true,
-            prepend: false,
-            protect: false,
-            invalid_option: None,
-            line_number: 0,
-        };
+        let auto = test_entry("/tmp/a", "a");
         assert_eq!(format_entry_line(&auto), "'/tmp/a' [a] (auto)");
 
-        let noauto = PathEntry {
-            location: "/tmp/b".to_string(),
-            name: "b".to_string(),
-            autoset: false,
-            prepend: false,
-            protect: false,
-            invalid_option: None,
-            line_number: 0,
-        };
+        let mut noauto = test_entry("/tmp/b", "b");
+        noauto.autoset = false;
         assert_eq!(format_entry_line(&noauto), "'/tmp/b' [b] (noauto)");
 
-        let pre = PathEntry {
-            location: "/tmp/c".to_string(),
-            name: "c".to_string(),
-            autoset: true,
-            prepend: true,
-            protect: false,
-            invalid_option: None,
-            line_number: 0,
-        };
+        let mut pre = test_entry("/tmp/c", "c");
+        pre.prepend = true;
         assert_eq!(format_entry_line(&pre), "'/tmp/c' [c] (auto,pre)");
 
-        let protect = PathEntry {
-            location: "/tmp/d".to_string(),
-            name: "d".to_string(),
-            autoset: true,
-            prepend: false,
-            protect: true,
-            invalid_option: None,
-            line_number: 0,
-        };
+        let mut protect = test_entry("/tmp/d", "d");
+        protect.protect = true;
         assert_eq!(format_entry_line(&protect), "'/tmp/d' [d] (auto,protect)");
     }
 
     #[test]
     /// Ensure serializer wraps locations in quotes without escape processing.
     fn format_entry_line_quotes_location_without_escape_processing() {
-        let spaced = PathEntry {
-            location: "/tmp/my tools".to_string(),
-            name: "tools".to_string(),
-            autoset: true,
-            prepend: false,
-            protect: false,
-            invalid_option: None,
-            line_number: 0,
-        };
+        let spaced = test_entry("/tmp/my tools", "tools");
         assert_eq!(format_entry_line(&spaced), "'/tmp/my tools' [tools] (auto)");
 
-        let backslash = PathEntry {
-            location: "/tmp/my\\tools".to_string(),
-            name: "tools".to_string(),
-            autoset: true,
-            prepend: false,
-            protect: false,
-            invalid_option: None,
-            line_number: 0,
-        };
+        let backslash = test_entry("/tmp/my\\tools", "tools");
         assert_eq!(
             format_entry_line(&backslash),
             "'/tmp/my\\tools' [tools] (auto)"
