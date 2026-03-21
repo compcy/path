@@ -10,7 +10,7 @@ commands that compute PATH output a shell assignment like
 `export PATH='...new value...'`.
 
 For a persistent setup, source the wrapper script from your shell rc file
-(`~/.zshrc`, `~/.bashrc`, etc.). 
+(`~/.zshrc`, `~/.bashrc`, etc.).
 
 ```sh
 # ~/.zshrc (or ~/.bashrc)
@@ -114,6 +114,7 @@ Global option:
   /bin                sysbin
   /home/user/mytools
   ```
+
 - `path load` — apply all stored entries marked `auto` to PATH
   - Entries with option `pre` are prepended.
   - Entries without `pre` are appended (post behavior by default).
@@ -126,6 +127,7 @@ Global option:
   - Missing system paths are appended to the current PATH in that order.
 
 **Startup validation note:** when reading `.path`, the tool aborts if it finds:
+
 - a nameless entry,
 - a relative or non-canonical-looking stored location,
 - a stored location containing `:`,
@@ -209,4 +211,3 @@ This project is licensed under the MIT License. See `LICENSE`.
 
 All Rust dependencies are required to have an SPDX license expression that
 includes `MIT`. CI enforces this policy.
-

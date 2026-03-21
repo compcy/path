@@ -38,10 +38,10 @@ This directory contains pre-made `.path` store files for integration tests.
 fn my_test() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
-    
+
     // Load the fixture instead of writing inline
     write_fixture_to_store(dir, "protected_entry").unwrap();
-    
+
     // Now run test with the fixture data
     let mut cmd = test_cmd(dir, "");
     cmd.arg("verify");
