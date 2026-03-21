@@ -235,7 +235,7 @@ fn list_shows_entries() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/foo (foo) [auto]"));
+    assert!(out_str.contains("/foo [foo] (auto)"));
     assert!(!out_str.contains("/bar"));
 }
 
@@ -260,8 +260,8 @@ fn list_shows_noauto_status() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/opt/auto (a) [auto]"));
-    assert!(out_str.contains("/opt/no (n) [noauto]"));
+    assert!(out_str.contains("/opt/auto [a] (auto)"));
+    assert!(out_str.contains("/opt/no [n] (noauto)"));
 }
 
 /// `list` should print a message when the configured store file is missing.
@@ -873,8 +873,8 @@ fn list_normalizes_trailing_slash_from_store_file() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/opt/tools (tools) [auto]"));
-    assert!(!out_str.contains("/opt/tools/ (tools) [auto]"));
+    assert!(out_str.contains("/opt/tools [tools] (auto)"));
+    assert!(!out_str.contains("/opt/tools/ [tools] (auto)"));
 }
 
 /// Stored relative locations should be rejected during startup validation.
@@ -1095,6 +1095,71 @@ fn list_rejects_delimiter_malicious_cases() {
             "'/tmp/safe' [safe] auto)\n",
             "error: found nameless entry",
         ),
+        (
+            "backtick in location",
+            "'/tmp/`evil`' [bad] (auto)\n",
+            "error: invalid stored location '/tmp/`evil`'",
+        ),
+        (
+            "asymmetric backtick in location",
+            "'/tmp/evil`' [bad] (auto)\n",
+            "error: invalid stored location '/tmp/evil`'",
+        ),
+        (
+            "name contains backtick",
+            "'/tmp/safe' [ba`d] (auto)\n",
+            "error: invalid name 'ba`d'",
+        ),
+        (
+            "options contain backtick",
+            "'/tmp/safe' [safe] (au`to)\n",
+            "error: found nameless entry",
+        ),
+        (
+            "semicolon in location",
+            "'/tmp/ev;il' [bad] (auto)\n",
+            "error: invalid stored location '/tmp/ev;il'",
+        ),
+        (
+            "dollar sign in location",
+            "'/tmp/$evil' [bad] (auto)\n",
+            "error: invalid stored location '/tmp/$evil'",
+        ),
+        (
+            "pipe in location",
+            "'/tmp/ev|il' [bad] (auto)\n",
+            "error: invalid stored location '/tmp/ev|il'",
+        ),
+        (
+            "wildcard star in location",
+            "'/tmp/ev*il' [bad] (auto)\n",
+            "error: invalid stored location '/tmp/ev*il'",
+        ),
+        (
+            "wildcard question mark in location",
+            "'/tmp/ev?il' [bad] (auto)\n",
+            "error: invalid stored location '/tmp/ev?il'",
+        ),
+        (
+            "ampersand in location",
+            "'/tmp/ev&il' [bad] (auto)\n",
+            "error: invalid stored location '/tmp/ev&il'",
+        ),
+        (
+            "redirect less-than in location",
+            "'/tmp/ev<il' [bad] (auto)\n",
+            "error: invalid stored location '/tmp/ev<il'",
+        ),
+        (
+            "redirect greater-than in location",
+            "'/tmp/ev>il' [bad] (auto)\n",
+            "error: invalid stored location '/tmp/ev>il'",
+        ),
+        (
+            "hash in location",
+            "'/tmp/ev#il' [bad] (auto)\n",
+            "error: invalid stored location '/tmp/ev#il'",
+        ),
     ];
 
     for (label, line, expected_stderr) in cases {
@@ -1163,7 +1228,7 @@ fn list_reads_quoted_location_with_spaces() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/opt/my tools (tools) [auto]"));
+    assert!(out_str.contains("/opt/my tools [tools] (auto)"));
 }
 
 /// `load` should add only `auto` entries and skip `noauto` entries.

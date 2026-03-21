@@ -629,12 +629,36 @@ fn is_store_location_canonical_like(location: &str) -> bool {
         return false;
     }
 
-    // Disallow store syntax delimiters in locations to reduce parser ambiguity
-    // and reject crafted entries with metacharacters.
-    if location
-        .chars()
-        .any(|character| matches!(character, '[' | ']' | '(' | ')' | '{' | '}'))
-    {
+    // Disallow control characters, store syntax delimiters, and shell
+    // metacharacters in locations to prevent parser ambiguity and shell
+    // injection via crafted entries.
+    if location.chars().any(|character| {
+        character.is_ascii_control()
+            || matches!(
+                character,
+                '[' | ']'
+                    | '('
+                    | ')'
+                    | '{'
+                    | '}'
+                    | '`'
+                    | ';'
+                    | '$'
+                    | '!'
+                    | '&'
+                    | '|'
+                    | '<'
+                    | '>'
+                    | '"'
+                    | '\''
+                    | '\\'
+                    | '*'
+                    | '?'
+                    | '#'
+                    | '~'
+                    | '^'
+            )
+    }) {
         return false;
     }
 
@@ -713,18 +737,13 @@ fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -
 /// Format a stored entry for human-readable list output.
 fn format_list_entry(entry: &PathEntry) -> String {
     let autoset_marker = if entry.autoset { "auto" } else { "noauto" };
-    let placement_suffix = if entry.prepend { ",pre" } else { "" };
-    if entry.name != entry.location {
-        format!(
-            "{} ({}) [{}{}]",
-            entry.location, entry.name, autoset_marker, placement_suffix
-        )
+    let options = if entry.prepend {
+        format!("{},pre", autoset_marker)
     } else {
-        format!(
-            "{} [{}{}]",
-            entry.location, autoset_marker, placement_suffix
-        )
-    }
+        autoset_marker.to_string()
+    };
+
+    format!("{} [{}] ({})", entry.location, entry.name, options)
 }
 
 /// Handle the `add` subcommand.
@@ -1153,6 +1172,25 @@ mod tests {
         assert!(!is_store_location_canonical_like("/tmp/evil("));
         assert!(!is_store_location_canonical_like("/tmp/evil)"));
         assert!(!is_store_location_canonical_like("/tmp/{evil}"));
+        assert!(!is_store_location_canonical_like("/tmp/`evil`"));
+        assert!(!is_store_location_canonical_like("/tmp/evil`"));
+        assert!(!is_store_location_canonical_like("/tmp/ev;il"));
+        assert!(!is_store_location_canonical_like("/tmp/$evil"));
+        assert!(!is_store_location_canonical_like("/tmp/ev|il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev*il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev?il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev!il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev&il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev<il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev>il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev\"il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev'il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev\\il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev#il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev~il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev^il"));
+        assert!(!is_store_location_canonical_like("/tmp/ev\til")); // tab
+        assert!(!is_store_location_canonical_like("/tmp/ev\nil")); // newline
     }
 
     #[test]
@@ -1200,7 +1238,7 @@ mod tests {
     }
 
     #[test]
-    /// Ensure list formatting includes names when distinct and always includes autoset status.
+    /// Ensure list formatting mirrors store layout with unquoted locations.
     fn format_list_entry_includes_name_when_different() {
         let entry = PathEntry {
             location: "/usr/local/bin".to_string(),
@@ -1209,7 +1247,7 @@ mod tests {
             prepend: false,
             line_number: 0,
         };
-        assert_eq!(format_list_entry(&entry), "/usr/local/bin (tools) [auto]");
+        assert_eq!(format_list_entry(&entry), "/usr/local/bin [tools] (auto)");
 
         let same = PathEntry {
             location: "/usr/bin".to_string(),
@@ -1218,7 +1256,7 @@ mod tests {
             prepend: false,
             line_number: 0,
         };
-        assert_eq!(format_list_entry(&same), "/usr/bin [noauto]");
+        assert_eq!(format_list_entry(&same), "/usr/bin [/usr/bin] (noauto)");
 
         let pre = PathEntry {
             location: "/opt/pre".to_string(),
@@ -1227,7 +1265,7 @@ mod tests {
             prepend: true,
             line_number: 0,
         };
-        assert_eq!(format_list_entry(&pre), "/opt/pre (pre) [auto,pre]");
+        assert_eq!(format_list_entry(&pre), "/opt/pre [pre] (auto,pre)");
     }
 
     #[test]
