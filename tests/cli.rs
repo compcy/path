@@ -6,7 +6,8 @@
 // functions, as this ensures the CLI remains stable.
 use assert_cmd::cargo;
 use std::fs;
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 use tempfile::tempdir;
 
 /// Helper to construct a test command with standard directory and store file setup.
@@ -17,6 +18,33 @@ fn test_cmd(dir: &Path, path_env: &str) -> assert_cmd::Command {
         .arg(dir.join(".path"))
         .env("PATH", path_env);
     cmd
+}
+
+/// Returns the path to an existing fixture file under `tests/paths`.
+fn fixture_path(fixture_name: &str) -> PathBuf {
+    Path::new("tests")
+        .join("paths")
+        .join(format!("{}.path", fixture_name))
+}
+
+/// Copies an existing fixture file into the temp test directory as `.path`.
+///
+/// This keeps fixture data source-of-truth in `tests/paths/*.path` while
+/// ensuring each test runs against an isolated, writable store file.
+fn copy_fixture_to_temp_store(dir: &Path, fixture_name: &str) -> io::Result<()> {
+    fs::copy(fixture_path(fixture_name), dir.join(".path")).map(|_| ())
+}
+
+/// Runs a command that is expected to succeed and returns stdout as UTF-8 text.
+fn get_stdout(cmd: &mut assert_cmd::Command) -> String {
+    let output = cmd.assert().success().get_output().stdout.clone();
+    String::from_utf8_lossy(&output).to_string()
+}
+
+/// Runs a command that is expected to fail and returns stderr as UTF-8 text.
+fn get_stderr(cmd: &mut assert_cmd::Command) -> String {
+    let assert = cmd.assert().failure();
+    String::from_utf8_lossy(&assert.get_output().stderr).to_string()
 }
 
 /// Confirm that, with no subcommands, the utility simply echoes the
@@ -157,7 +185,7 @@ fn add_with_spaced_location_round_trips_through_store_and_output() {
         .into_owned();
 
     let mut cmd = test_cmd(dir, "/usr/bin");
-    cmd.arg("add").arg("--pre").arg("/tmp/y").arg("yname");
+    cmd.arg("add").arg("./my tools").arg("mytools");
     let out_str = get_stdout(&mut cmd);
     assert_eq!(
         out_str.trim(),
@@ -216,8 +244,7 @@ fn list_shows_entries() {
 fn list_shows_noauto_status() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
-    let store = dir.join(".path");
-    fs::write(&store, "'/opt/auto' [a] (auto)\n'/opt/no' [n] (noauto)\n").unwrap();
+    copy_fixture_to_temp_store(dir, "auto_noauto").unwrap();
 
     let mut cmd = test_cmd(dir, "");
     let output = cmd
@@ -276,13 +303,7 @@ fn list_reports_empty_store_file() {
 fn invalid_entries_are_warned_about() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
-    let store = dir.join(".path");
-    // write one invalid and one valid line
-    fs::write(
-        &store,
-        "'/no/such/thing' [bad] (auto)\n'/tmp' [tmp] (auto)\n",
-    )
-    .unwrap();
+    copy_fixture_to_temp_store(dir, "one_invalid_one_valid").unwrap();
 
     let mut cmd = test_cmd(dir, "");
     cmd.arg("list");
@@ -292,7 +313,7 @@ fn invalid_entries_are_warned_about() {
     assert!(stderr.contains("/no/such/thing"));
 
     // store file should remain unchanged
-    let contents = fs::read_to_string(store).unwrap();
+    let contents = fs::read_to_string(dir.join(".path")).unwrap();
     assert!(contents.contains("/no/such/thing"));
     assert!(contents.contains("'/tmp' [tmp] (auto)"));
 }
@@ -358,13 +379,7 @@ fn duplicate_names_are_rejected() {
 fn duplicate_names_in_file_cause_error() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
-    let store = dir.join(".path");
-    // write two entries with the same name "dup"
-    fs::write(
-        &store,
-        "'/foo/a' [dup] (auto)\n'/foo/b' [dup] (auto)\n'/foo/c' [unique] (auto)\n",
-    )
-    .unwrap();
+    copy_fixture_to_temp_store(dir, "duplicate_names").unwrap();
 
     let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("list").assert().failure();
@@ -372,7 +387,7 @@ fn duplicate_names_in_file_cause_error() {
     assert!(stderr.contains("error: duplicate name 'dup'"));
     assert!(stderr.contains("lines: 1, 2"));
     // file should remain untouched
-    let contents = fs::read_to_string(store).unwrap();
+    let contents = fs::read_to_string(dir.join(".path")).unwrap();
     assert!(contents.contains("'/foo/a' [dup] (auto)"));
     assert!(contents.contains("'/foo/b' [dup] (auto)"));
     assert!(contents.contains("'/foo/c' [unique] (auto)"));
@@ -708,7 +723,7 @@ fn add_dot_uses_canonical_path_in_output() {
         .into_owned();
 
     let mut cmd = test_cmd(dir, "");
-    cmd.arg("add").arg("--pre").arg("/tmp/y").arg("yname");
+    cmd.arg("add").arg(".").arg("dot");
     let out_str = get_stdout(&mut cmd);
     assert_eq!(out_str.trim(), format!("export PATH='{}'", canonical));
 }
@@ -724,7 +739,7 @@ fn add_dot_does_not_duplicate_existing_entry() {
         .into_owned();
 
     let mut cmd = test_cmd(dir, &canonical);
-    cmd.arg("add").arg("--pre").arg("/tmp/y").arg("yname");
+    cmd.arg("add").arg(".").arg("dot");
     let out_str = get_stdout(&mut cmd);
     assert_eq!(out_str.trim(), format!("export PATH='{}'", canonical));
 }
@@ -744,7 +759,7 @@ fn add_does_not_duplicate_trailing_slash_variant() {
     let initial_path = format!("{}:/usr/bin", with_slash);
 
     let mut cmd = test_cmd(dir, &initial_path);
-    cmd.arg("add").arg("--pre").arg("/tmp/y").arg("yname");
+    cmd.arg("add").arg(".").arg("dot");
     let out_str = get_stdout(&mut cmd);
     assert_eq!(
         out_str.trim(),
