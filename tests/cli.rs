@@ -597,6 +597,23 @@ fn add_rejects_colon_in_path_argument() {
     assert!(stderr.contains("must not contain ':'"));
 }
 
+/// Paths passed to `add` must not contain `\\`.
+#[test]
+fn add_rejects_backslash_in_path_argument() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "");
+    cmd.arg("add").arg("/tmp\\evil");
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("must not contain '\\\\'"));
+}
+
 /// Adding a path that refers to a regular file (not a directory) should fail.
 #[test]
 fn reject_file_locations() {
@@ -710,6 +727,23 @@ fn remove_rejects_colon_in_path_argument() {
     assert!(stderr.contains("must not contain ':'"));
 }
 
+/// Paths passed to `remove` must not contain `\\`.
+#[test]
+fn remove_rejects_backslash_in_path_argument() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "");
+    cmd.arg("remove").arg("/tmp\\evil");
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("must not contain '\\\\'"));
+}
+
 /// `list` should fail if the store cannot be loaded.
 #[test]
 fn list_fails_when_store_is_unreadable() {
@@ -759,6 +793,23 @@ fn delete_rejects_colon_in_path_argument() {
     let assert = cmd.assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("must not contain ':'"));
+}
+
+/// Paths passed to `delete` must not contain `\\`.
+#[test]
+fn delete_rejects_backslash_in_path_argument() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "");
+    cmd.arg("delete").arg("/tmp\\evil");
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("must not contain '\\\\'"));
 }
 
 /// Adding `.` should use the canonical current directory in PATH output.
@@ -983,17 +1034,17 @@ fn list_rejects_delimiter_malicious_cases() {
         (
             "escaped close bracket in location",
             "'/tmp/evil\\]' [bad] (auto)\n",
-            "error: invalid stored location '/tmp/evil]'",
+            "error: invalid stored location '/tmp/evil\\]'",
         ),
         (
             "escaped close parenthesis in location",
             "'/tmp/evil\\)' [bad] (auto)\n",
-            "error: invalid stored location '/tmp/evil)'",
+            "error: invalid stored location '/tmp/evil\\)'",
         ),
         (
             "escaped close brace in location",
             "'/tmp/evil\\}' [bad] (auto)\n",
-            "error: invalid stored location '/tmp/evil}'",
+            "error: invalid stored location '/tmp/evil\\}'",
         ),
         (
             "name contains open bracket",

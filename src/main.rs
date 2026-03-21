@@ -62,35 +62,11 @@ fn parse_autoset_value(value: &str) -> Option<bool> {
     }
 }
 
-/// Decode a stored location field wrapped in single quotes.
-fn parse_location_field(value: &str) -> Option<String> {
-    let inner = value
+/// Strip matching single-quote delimiters from a field.
+fn unquote_single_quoted(value: &str) -> Option<&str> {
+    value
         .strip_prefix('\'')
-        .and_then(|location| location.strip_suffix('\''))?;
-
-    let mut decoded = String::with_capacity(inner.len());
-    let mut escaped = false;
-
-    for character in inner.chars() {
-        if escaped {
-            decoded.push(character);
-            escaped = false;
-            continue;
-        }
-
-        if character == '\\' {
-            escaped = true;
-            continue;
-        }
-
-        decoded.push(character);
-    }
-
-    if escaped {
-        return None;
-    }
-
-    Some(decoded)
+        .and_then(|inner| inner.strip_suffix('\''))
 }
 
 /// Decode a stored name field.
@@ -145,10 +121,7 @@ fn parse_entry_options(value: &str) -> Option<(bool, bool)> {
 /// Split a store line into fields while keeping a quoted location token intact.
 fn store_field_regex() -> &'static Regex {
     static FIELD_RE: OnceLock<Regex> = OnceLock::new();
-    FIELD_RE.get_or_init(|| {
-        Regex::new(r"'(?:\\.|[^'\\])*'|(?:\\.|[^\s\\]|\\)+")
-            .expect("store field regex should be valid")
-    })
+    FIELD_RE.get_or_init(|| Regex::new(r"'[^']*'|\S+").expect("store field regex should be valid"))
 }
 
 /// Split a store line into raw fields using a regex tokenizer.
@@ -159,18 +132,9 @@ fn split_store_fields(line: &str) -> Vec<String> {
         .collect()
 }
 
-/// Quote and escape a stored location field.
+/// Wrap a stored location field in single quotes.
 fn quote_store_location_field(field: &str) -> String {
-    let mut quoted = String::with_capacity(field.len() + 2);
-    quoted.push('\'');
-    for character in field.chars() {
-        if character == '\\' || character == '\'' {
-            quoted.push('\\');
-        }
-        quoted.push(character);
-    }
-    quoted.push('\'');
-    quoted
+    format!("'{}'", field)
 }
 
 fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
@@ -190,11 +154,11 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
 
     let entry = match parts.as_slice() {
         [location, name] => {
-            let parsed_location = parse_location_field(location);
+            let parsed_location = unquote_single_quoted(location);
             let parsed_name = parse_name_field(name);
             match (parsed_location, parsed_name) {
                 (Some(location), Some(name)) => PathEntry {
-                    location: strip_trailing_slash(&location),
+                    location: strip_trailing_slash(location),
                     name,
                     autoset: true,
                     prepend: false,
@@ -229,12 +193,12 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
             }
         }
         [location, name, options] => {
-            let parsed_location = parse_location_field(location);
+            let parsed_location = unquote_single_quoted(location);
             let parsed_name = parse_name_field(name);
             let parsed_options = parse_entry_options(options);
             match (parsed_location, parsed_name, parsed_options) {
                 (Some(location), Some(name), Some((autoset, prepend))) => PathEntry {
-                    location: strip_trailing_slash(&location),
+                    location: strip_trailing_slash(location),
                     name,
                     autoset,
                     prepend,
@@ -296,7 +260,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
         }
         _ => {
             eprintln!(
-                "warning: malformed entry at line {}: expected '<location>' [<name>] (<options>) (or omit options to default to auto/post); escape single quotes in location as \\\\'",
+                "warning: malformed entry at line {}: expected '<location>' [<name>] (<options>) (or omit options to default to auto/post)",
                 line_number
             );
             PathEntry {
@@ -570,6 +534,11 @@ fn contains_path_separator(path: &str) -> bool {
     path.contains(':')
 }
 
+/// Return whether a path-like value contains a backslash.
+fn contains_backslash(path: &str) -> bool {
+    path.contains('\\')
+}
+
 /// Normalize a path into an absolute, canonical-looking string.
 ///
 /// This performs lexical normalization (removing `.` and resolving `..`)
@@ -783,6 +752,11 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
         std::process::exit(1);
     }
 
+    if !resolved_by_name && contains_backslash(&location) {
+        eprintln!("error: path '{}' must not contain '\\\\'", location);
+        std::process::exit(1);
+    }
+
     if !resolved_by_name {
         location = canonicalize_relative_cli_argument(&location);
     }
@@ -890,6 +864,11 @@ fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
             std::process::exit(1);
         }
 
+        if contains_backslash(&argument) {
+            eprintln!("error: path '{}' must not contain '\\\\'", argument);
+            std::process::exit(1);
+        }
+
         location_to_remove = canonicalize_relative_cli_argument(&argument);
         raw_path_arg = Some(argument.as_str());
     }
@@ -932,6 +911,11 @@ fn handle_delete(delete_matches: &ArgMatches, store_file: &Path) {
 
         if contains_path_separator(&argument) {
             eprintln!("error: path '{}' must not contain ':'", argument);
+            std::process::exit(1);
+        }
+
+        if contains_backslash(&argument) {
+            eprintln!("error: path '{}' must not contain '\\\\'", argument);
             std::process::exit(1);
         }
 
@@ -1077,6 +1061,21 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    /// Ensure single-quoted values are unwrapped correctly.
+    fn unquote_single_quoted_strips_delimiters() {
+        assert_eq!(unquote_single_quoted("'foo'"), Some("foo"));
+        assert_eq!(unquote_single_quoted("''"), Some(""));
+    }
+
+    #[test]
+    /// Ensure malformed or unquoted values are rejected.
+    fn unquote_single_quoted_rejects_invalid_shape() {
+        assert_eq!(unquote_single_quoted("foo"), None);
+        assert_eq!(unquote_single_quoted("'foo"), None);
+        assert_eq!(unquote_single_quoted("foo'"), None);
+    }
 
     #[test]
     /// Verify three-field lines are parsed into all struct fields.
@@ -1344,10 +1343,10 @@ mod tests {
     }
 
     #[test]
-    /// Ensure escaped backslashes are decoded from store lines.
-    fn parse_entry_line_decodes_escaped_backslash() {
+    /// Ensure location parsing does not decode backslash escape sequences.
+    fn parse_entry_line_preserves_backslashes_for_validation() {
         let entry = parse_entry_line("'/tmp/my\\\\tools' [tools] (auto)", 4).unwrap();
-        assert_eq!(entry.location, "/tmp/my\\tools");
+        assert_eq!(entry.location, "/tmp/my\\\\tools");
     }
 
     #[test]
@@ -1398,8 +1397,8 @@ mod tests {
     }
 
     #[test]
-    /// Ensure serializer quotes locations and escapes backslashes as needed.
-    fn format_entry_line_quotes_location_and_escapes_backslashes() {
+    /// Ensure serializer wraps locations in quotes without escape processing.
+    fn format_entry_line_quotes_location_without_escape_processing() {
         let spaced = PathEntry {
             location: "/tmp/my tools".to_string(),
             name: "tools".to_string(),
@@ -1418,7 +1417,7 @@ mod tests {
         };
         assert_eq!(
             format_entry_line(&backslash),
-            "'/tmp/my\\\\tools' [tools] (auto)"
+            "'/tmp/my\\tools' [tools] (auto)"
         );
     }
 }
