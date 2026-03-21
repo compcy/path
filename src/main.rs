@@ -27,52 +27,48 @@ struct PathEntry {
 const DEFAULT_STORE_FILE_NAME: &str = ".path";
 const STORE_FILE_LAYOUT_COMMENT: &str = "# layout: '<location>' [<name>] (<options>)";
 
-/// Seed specification for a standard system PATH entry.
-struct SystemPathSeed {
-    location: &'static str,
-    name: &'static str,
+/// Build a protected built-in system entry as a `PathEntry`.
+fn system_path_entry(location: &str, name: &str) -> PathEntry {
+    PathEntry {
+        location: location.to_string(),
+        name: name.to_string(),
+        autoset: true,
+        prepend: false,
+        protect: true,
+        invalid_option: None,
+        line_number: 0,
+    }
 }
 
 /// Standard system paths managed by `path restore`.
-const STANDARD_SYSTEM_PATHS: &[SystemPathSeed] = &[
-    SystemPathSeed {
-        location: "/bin",
-        name: "sysbin",
-    },
-    SystemPathSeed {
-        location: "/sbin",
-        name: "syssbin",
-    },
-    SystemPathSeed {
-        location: "/usr/bin",
-        name: "usrbin",
-    },
-    SystemPathSeed {
-        location: "/usr/sbin",
-        name: "usrsbin",
-    },
-    SystemPathSeed {
-        location: "/usr/local/bin",
-        name: "usrlocalbin",
-    },
-    SystemPathSeed {
-        location: "/usr/local/sbin",
-        name: "usrlocalsbin",
-    },
-];
+fn standard_system_paths() -> &'static [PathEntry] {
+    static SYSTEM_PATHS: OnceLock<Vec<PathEntry>> = OnceLock::new();
+    SYSTEM_PATHS
+        .get_or_init(|| {
+            vec![
+                system_path_entry("/bin", "sysbin"),
+                system_path_entry("/sbin", "syssbin"),
+                system_path_entry("/usr/bin", "usrbin"),
+                system_path_entry("/usr/sbin", "usrsbin"),
+                system_path_entry("/usr/local/bin", "usrlocalbin"),
+                system_path_entry("/usr/local/sbin", "usrlocalsbin"),
+            ]
+        })
+        .as_slice()
+}
 
 /// Return the built-in protected system entry matching a reserved name.
-fn find_system_path_by_name(name: &str) -> Option<&'static SystemPathSeed> {
-    STANDARD_SYSTEM_PATHS
+fn find_system_path_by_name(name: &str) -> Option<&'static PathEntry> {
+    standard_system_paths()
         .iter()
         .find(|entry| entry.name == name)
 }
 
 /// Return the built-in protected system entry matching a location.
-fn find_system_path_by_location(location: &str) -> Option<&'static SystemPathSeed> {
-    STANDARD_SYSTEM_PATHS
+fn find_system_path_by_location(location: &str) -> Option<&'static PathEntry> {
+    standard_system_paths()
         .iter()
-        .find(|entry| strip_trailing_slash(entry.location) == strip_trailing_slash(location))
+        .find(|entry| strip_trailing_slash(&entry.location) == strip_trailing_slash(location))
 }
 
 /// Return the default store file path.
@@ -1163,9 +1159,9 @@ fn handle_verify(store_file: &Path) {
 fn handle_restore() {
     let mut current = env::var("PATH").unwrap_or_default();
 
-    for system_entry in STANDARD_SYSTEM_PATHS {
-        if !path_contains_segment(&current, system_entry.location) {
-            current = compose_path(&current, system_entry.location, false);
+    for system_entry in standard_system_paths() {
+        if !path_contains_segment(&current, &system_entry.location) {
+            current = compose_path(&current, &system_entry.location, false);
         }
     }
 
