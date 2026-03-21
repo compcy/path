@@ -5,6 +5,7 @@
 // working directory and environment variables instead of calling internal
 // functions, as this ensures the CLI remains stable.
 use assert_cmd::cargo;
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -39,6 +40,60 @@ fn copy_fixture_to_temp_store(dir: &Path, fixture_name: &str) -> io::Result<()> 
 fn get_stdout(cmd: &mut assert_cmd::Command) -> String {
     let output = cmd.assert().success().get_output().stdout.clone();
     String::from_utf8_lossy(&output).to_string()
+}
+
+/// Return all non-blank pretty-print names from `list --pretty` output.
+fn pretty_output_names(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .skip(2)
+        .filter_map(|line| {
+            let trimmed = line.trim_end();
+            trimmed
+                .rfind("  ")
+                .map(|separator| trimmed[separator..].trim())
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// Assert that all non-blank pretty-print names in the table are unique.
+fn assert_pretty_output_has_unique_names(output: &str) {
+    let names = pretty_output_names(output);
+    let unique_names: HashSet<String> = names.iter().cloned().collect();
+
+    assert_eq!(
+        unique_names.len(),
+        names.len(),
+        "expected unique pretty-print names, got: {:?}",
+        names
+    );
+}
+
+#[test]
+fn pretty_output_names_extracts_non_blank_names() {
+    let output = "PATH  NAME\n----  ----\n/usr/bin  usrbin\n/bin  sysbin\n/unknown/path\n";
+
+    assert_eq!(
+        pretty_output_names(output),
+        vec!["usrbin".to_string(), "sysbin".to_string()]
+    );
+}
+
+#[test]
+fn assert_pretty_output_has_unique_names_accepts_blank_names() {
+    let output = "PATH  NAME\n----  ----\n/usr/bin  usrbin\n/unknown/path\n";
+
+    assert_pretty_output_has_unique_names(output);
+}
+
+#[test]
+fn assert_pretty_output_has_unique_names_rejects_duplicates() {
+    let output = "PATH  NAME\n----  ----\n/usr/bin  dup\n/bin  dup\n";
+
+    let result = std::panic::catch_unwind(|| assert_pretty_output_has_unique_names(output));
+    assert!(result.is_err());
 }
 
 /// Runs a command that is expected to fail and returns stderr as UTF-8 text.
@@ -1234,6 +1289,7 @@ fn list_pretty_shows_header_and_segments() {
 
     let mut cmd = test_cmd(dir, "/usr/bin:/bin");
     let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    assert_pretty_output_has_unique_names(&out);
 
     // Header row must be present.
     assert!(out.contains("PATH"));
@@ -1253,10 +1309,33 @@ fn list_pretty_resolves_system_path_names() {
 
     let mut cmd = test_cmd(dir, "/usr/bin:/bin:/sbin");
     let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    assert_pretty_output_has_unique_names(&out);
 
     assert!(out.contains("usrbin"));
     assert!(out.contains("sysbin"));
     assert!(out.contains("syssbin"));
+}
+
+/// `list --pretty` should resolve names for known non-system extra paths.
+#[test]
+fn list_pretty_resolves_known_extra_path_names() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let home = dir.to_str().unwrap();
+    let path_env = format!(
+        "/opt/homebrew/bin:/opt/homebrew/sbin:{}/.cargo/bin:{}/.local/bin",
+        home, home
+    );
+
+    let mut cmd = test_cmd(dir, &path_env);
+    cmd.env("HOME", home);
+    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    assert_pretty_output_has_unique_names(&out);
+
+    assert!(out.contains("homebrewbin"));
+    assert!(out.contains("homebrewsbin"));
+    assert!(out.contains("cargo"));
+    assert!(out.contains("pipx"));
 }
 
 /// `list --pretty` should resolve names from stored entries in the store file.
@@ -1272,6 +1351,7 @@ fn list_pretty_resolves_stored_entry_names() {
 
     let mut cmd = test_cmd(dir, "/tmp:/usr/bin");
     let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    assert_pretty_output_has_unique_names(&out);
 
     // /tmp should appear with its stored name.
     let tmp_line = out.lines().find(|l| l.starts_with("/tmp")).unwrap();
@@ -1290,6 +1370,7 @@ fn list_pretty_leaves_name_blank_for_unknown_segments() {
 
     let mut cmd = test_cmd(dir, "/some/unknown/path");
     let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    assert_pretty_output_has_unique_names(&out);
 
     // The segment must appear.
     let seg_line = out
@@ -1312,6 +1393,7 @@ fn list_pretty_with_empty_path_prints_only_table_header() {
 
     let mut cmd = test_cmd(dir, "");
     let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    assert_pretty_output_has_unique_names(&out);
 
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 2);

@@ -27,14 +27,14 @@ struct PathEntry {
 const DEFAULT_STORE_FILE_NAME: &str = ".path";
 const STORE_FILE_LAYOUT_COMMENT: &str = "# layout: '<location>' [<name>] (<options>)";
 
-/// Build a protected built-in system entry as a `PathEntry`.
-fn system_path_entry(location: &str, name: &str) -> PathEntry {
+/// Build a built-in path entry as a `PathEntry`.
+fn builtin_path_entry(location: &str, name: &str, prepend: bool, protect: bool) -> PathEntry {
     PathEntry {
         location: location.to_string(),
         name: name.to_string(),
         autoset: true,
-        prepend: false,
-        protect: true,
+        prepend,
+        protect,
         invalid_option: None,
         line_number: 0,
     }
@@ -46,12 +46,12 @@ fn standard_system_paths() -> &'static [PathEntry] {
     SYSTEM_PATHS
         .get_or_init(|| {
             vec![
-                system_path_entry("/bin", "sysbin"),
-                system_path_entry("/sbin", "syssbin"),
-                system_path_entry("/usr/bin", "usrbin"),
-                system_path_entry("/usr/sbin", "usrsbin"),
-                system_path_entry("/usr/local/bin", "usrlocalbin"),
-                system_path_entry("/usr/local/sbin", "usrlocalsbin"),
+                builtin_path_entry("/bin", "sysbin", false, true),
+                builtin_path_entry("/sbin", "syssbin", false, true),
+                builtin_path_entry("/usr/bin", "usrbin", false, true),
+                builtin_path_entry("/usr/sbin", "usrsbin", false, true),
+                builtin_path_entry("/usr/local/bin", "usrlocalbin", false, true),
+                builtin_path_entry("/usr/local/sbin", "usrlocalsbin", false, true),
             ]
         })
         .as_slice()
@@ -69,6 +69,71 @@ fn find_system_path_by_location(location: &str) -> Option<&'static PathEntry> {
     standard_system_paths()
         .iter()
         .find(|entry| strip_trailing_slash(&entry.location) == strip_trailing_slash(location))
+}
+
+/// Known non-system tool paths recognised for display by `list --pretty`.
+///
+/// These entries are unprotected and are not managed by `path restore`. The
+/// `$HOME`-relative entries are expanded from the current environment at call
+/// time, so no caching is performed.
+fn known_extra_paths() -> Vec<PathEntry> {
+    let mut entries = vec![
+        builtin_path_entry("/opt/homebrew/bin", "homebrewbin", false, false),
+        builtin_path_entry("/opt/homebrew/sbin", "homebrewsbin", false, false),
+    ];
+
+    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+        let home_str = strip_trailing_slash(&home.to_string_lossy());
+        entries.push(builtin_path_entry(
+            &format!("{}/.cargo/bin", home_str),
+            "cargo",
+            false,
+            false,
+        ));
+        entries.push(builtin_path_entry(
+            &format!("{}/.local/bin", home_str),
+            "pipx",
+            false,
+            false,
+        ));
+    }
+
+    entries
+}
+
+/// Return the known extra path entry matching a location, if any.
+fn find_extra_path_by_location(location: &str) -> Option<PathEntry> {
+    known_extra_paths()
+        .into_iter()
+        .find(|entry| strip_trailing_slash(&entry.location) == strip_trailing_slash(location))
+}
+
+/// Return `true` if any name appears in both `PathEntry` slices.
+#[cfg(test)]
+fn path_entry_name_overlap(a: &[PathEntry], b: &[PathEntry]) -> bool {
+    a.iter()
+        .any(|left| b.iter().any(|right| left.name == right.name))
+}
+
+/// Return `true` if a `PathEntry` slice contains any duplicate names.
+#[cfg(test)]
+fn path_entries_have_unique_names(entries: &[PathEntry]) -> bool {
+    entries.iter().enumerate().all(|(index, entry)| {
+        entries
+            .iter()
+            .skip(index + 1)
+            .all(|other| entry.name != other.name)
+    })
+}
+
+/// Return whether all built-in path names are unique across system and extra
+/// path tables.
+#[cfg(test)]
+fn builtins_have_unique_names() -> bool {
+    let extra_paths = known_extra_paths();
+    path_entries_have_unique_names(standard_system_paths())
+        && path_entries_have_unique_names(&extra_paths)
+        && !path_entry_name_overlap(standard_system_paths(), &extra_paths)
 }
 
 /// Return the default store file path.
@@ -1170,8 +1235,9 @@ fn handle_restore() {
 
 /// Resolve the display name for a PATH segment.
 ///
-/// Checks stored entries first then falls back to the built-in system path
-/// table.  Returns an empty string when no name is known.
+/// Checks stored entries first, then the built-in system path table, then
+/// the known extra paths table.  Returns an empty string when no name is
+/// known.
 fn resolve_segment_name(segment: &str, entries: &[PathEntry]) -> String {
     let normalized = strip_trailing_slash(segment);
 
@@ -1184,6 +1250,10 @@ fn resolve_segment_name(segment: &str, entries: &[PathEntry]) -> String {
 
     if let Some(system) = find_system_path_by_location(&normalized) {
         return system.name.to_string();
+    }
+
+    if let Some(extra) = find_extra_path_by_location(&normalized) {
+        return extra.name;
     }
 
     String::new()
@@ -1442,6 +1512,15 @@ mod tests {
     }
 
     #[test]
+    /// Verify that all built-in path names are unique.
+    ///
+    /// This test enforces the invariant using the same `PathEntry` values that
+    /// power the runtime built-in path tables.
+    fn builtin_path_names_are_unique() {
+        assert!(builtins_have_unique_names());
+    }
+
+    #[test]
     /// Verify stored name lookup returns the expected location when present.
     fn resolve_location_by_name_returns_matching_location() {
         let mut entry = test_entry("/usr/local/bin", "tools");
@@ -1452,6 +1531,73 @@ mod tests {
             Some("/usr/local/bin".to_string())
         );
         assert_eq!(resolve_location_by_name("missing", &entries), None);
+    }
+
+    #[test]
+    /// Ensure known_extra_paths contains the expected static and HOME-relative entries.
+    fn known_extra_paths_contains_expected_entries() {
+        let extras = known_extra_paths();
+        let locations: Vec<&str> = extras.iter().map(|e| e.location.as_str()).collect();
+        assert!(locations.contains(&"/opt/homebrew/bin"));
+        assert!(locations.contains(&"/opt/homebrew/sbin"));
+        // All extra entries must be unprotected.
+        assert!(extras.iter().all(|e| !e.protect));
+        // HOME-relative entries are present when HOME is set.
+        if let Ok(home) = env::var("HOME") {
+            let cargo = format!("{}/.cargo/bin", home);
+            let pipx = format!("{}/.local/bin", home);
+            assert!(locations.contains(&cargo.as_str()));
+            assert!(locations.contains(&pipx.as_str()));
+        }
+    }
+
+    #[test]
+    /// Ensure built-in system and extra paths have the expected default flags.
+    fn built_in_paths_use_expected_option_flags() {
+        assert!(standard_system_paths().iter().all(|entry| {
+            entry.autoset && !entry.prepend && entry.protect && entry.invalid_option.is_none()
+        }));
+
+        let extras = known_extra_paths();
+        assert!(extras.iter().all(|entry| {
+            entry.autoset && !entry.prepend && !entry.protect && entry.invalid_option.is_none()
+        }));
+    }
+
+    #[test]
+    /// Ensure find_extra_path_by_location returns the matching entry and None for unknowns.
+    fn find_extra_path_by_location_returns_correct_entry() {
+        let entry = find_extra_path_by_location("/opt/homebrew/bin").unwrap();
+        assert_eq!(entry.name, "homebrewbin");
+        assert!(!entry.protect);
+
+        assert!(find_extra_path_by_location("/no/such/path").is_none());
+    }
+
+    #[test]
+    /// Ensure known Homebrew segments get friendly names in pretty output.
+    fn resolve_segment_name_resolves_homebrew_extras() {
+        let entries: Vec<PathEntry> = Vec::new();
+        assert_eq!(
+            resolve_segment_name("/opt/homebrew/bin", &entries),
+            "homebrewbin"
+        );
+        assert_eq!(
+            resolve_segment_name("/opt/homebrew/sbin", &entries),
+            "homebrewsbin"
+        );
+    }
+
+    #[test]
+    /// Ensure known user-local segments for Cargo and pipx are recognized.
+    fn resolve_segment_name_resolves_cargo_and_pipx_extras() {
+        let entries: Vec<PathEntry> = Vec::new();
+        if let Ok(home) = env::var("HOME") {
+            let cargo_bin = format!("{}/.cargo/bin", home);
+            let pipx_bin = format!("{}/.local/bin", home);
+            assert_eq!(resolve_segment_name(&cargo_bin, &entries), "cargo");
+            assert_eq!(resolve_segment_name(&pipx_bin, &entries), "pipx");
+        }
     }
 
     #[test]
