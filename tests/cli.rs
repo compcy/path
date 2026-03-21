@@ -836,236 +836,235 @@ fn list_rejects_delimiter_malicious_cases() {
     let cases = [
         (
             "parentheses in location",
-            "'/tmp/(evil)' [bad] (auto)\n",
+            "malicious/location_parentheses",
             "error: invalid stored location '/tmp/(evil)'",
         ),
         (
             "asymmetric open parenthesis in location",
-            "'/tmp/(evil' [bad] (auto)\n",
+            "malicious/location_open_parenthesis",
             "error: invalid stored location '/tmp/(evil'",
         ),
         (
             "asymmetric close parenthesis in location",
-            "'/tmp/evil)' [bad] (auto)\n",
+            "malicious/location_close_parenthesis",
             "error: invalid stored location '/tmp/evil)'",
         ),
         (
             "braces in location",
-            "'/tmp/{evil}' [bad] (auto)\n",
+            "malicious/location_braces",
             "error: invalid stored location '/tmp/{evil}'",
         ),
         (
             "asymmetric open brace in location",
-            "'/tmp/{evil' [bad] (auto)\n",
+            "malicious/location_open_brace",
             "error: invalid stored location '/tmp/{evil'",
         ),
         (
             "asymmetric close brace in location",
-            "'/tmp/evil}' [bad] (auto)\n",
+            "malicious/location_close_brace",
             "error: invalid stored location '/tmp/evil}'",
         ),
         (
             "square brackets in location",
-            "'/tmp/[evil]' [bad] (auto)\n",
+            "malicious/location_square_brackets",
             "error: invalid stored location '/tmp/[evil]'",
         ),
         (
             "asymmetric open bracket in location",
-            "'/tmp/[evil' [bad] (auto)\n",
+            "malicious/location_open_bracket",
             "error: invalid stored location '/tmp/[evil'",
         ),
         (
             "asymmetric close bracket in location",
-            "'/tmp/evil]' [bad] (auto)\n",
+            "malicious/location_close_bracket",
             "error: invalid stored location '/tmp/evil]'",
         ),
         (
             "escaped close bracket in location",
-            "'/tmp/evil\\]' [bad] (auto)\n",
+            "malicious/location_escaped_close_bracket",
             "error: invalid stored location '/tmp/evil\\]'",
         ),
         (
             "escaped close parenthesis in location",
-            "'/tmp/evil\\)' [bad] (auto)\n",
+            "malicious/location_escaped_close_parenthesis",
             "error: invalid stored location '/tmp/evil\\)'",
         ),
         (
             "escaped close brace in location",
-            "'/tmp/evil\\}' [bad] (auto)\n",
+            "malicious/location_escaped_close_brace",
             "error: invalid stored location '/tmp/evil\\}'",
         ),
         (
             "name contains open bracket",
-            "'/tmp/safe' [bad[] (auto)\n",
+            "malicious/name_open_bracket",
             "error: invalid name 'bad['",
         ),
         (
             "name contains close bracket",
-            "'/tmp/safe' [bad]] (auto)\n",
+            "malicious/name_close_bracket",
             "error: invalid name 'bad]'",
         ),
         (
             "name contains open parenthesis",
-            "'/tmp/safe' [ba(d)] (auto)\n",
+            "malicious/name_open_parenthesis",
             "error: invalid name 'ba(d)'",
         ),
         (
             "name contains close parenthesis",
-            "'/tmp/safe' [ba)d] (auto)\n",
+            "malicious/name_close_parenthesis",
             "error: invalid name 'ba)d'",
         ),
         (
             "name contains open brace",
-            "'/tmp/safe' [ba{d}] (auto)\n",
+            "malicious/name_open_brace",
             "error: invalid name 'ba{d}'",
         ),
         (
             "name contains close brace",
-            "'/tmp/safe' [ba}d] (auto)\n",
+            "malicious/name_close_brace",
             "error: invalid name 'ba}d'",
         ),
         (
             "name missing closing bracket",
-            "'/tmp/safe' [safe (auto)\n",
+            "malicious/name_missing_closing_bracket",
             "error: found nameless entry",
         ),
         (
             "name missing opening bracket",
-            "'/tmp/safe' safe] (auto)\n",
+            "malicious/name_missing_opening_bracket",
             "error: found nameless entry",
         ),
         (
             "name empty brackets",
-            "'/tmp/safe' [] (auto)\n",
+            "malicious/name_empty_brackets",
             "error: found nameless entry",
         ),
         (
             "options contain open bracket",
-            "'/tmp/safe' [safe] (a[uto)\n",
+            "malicious/options_open_bracket",
             "error: found nameless entry",
         ),
         (
             "options contain close bracket",
-            "'/tmp/safe' [safe] (a]uto)\n",
+            "malicious/options_close_bracket",
             "error: found nameless entry",
         ),
         (
             "options contain open parenthesis",
-            "'/tmp/safe' [safe] (a(uto)\n",
+            "malicious/options_open_parenthesis",
             "error: found nameless entry",
         ),
         (
             "options contain close parenthesis",
-            "'/tmp/safe' [safe] (a)uto)\n",
+            "malicious/options_close_parenthesis",
             "error: found nameless entry",
         ),
         (
             "options contain open brace",
-            "'/tmp/safe' [safe] (a{uto)\n",
+            "malicious/options_open_brace",
             "error: found nameless entry",
         ),
         (
             "options contain close brace",
-            "'/tmp/safe' [safe] (a}uto)\n",
+            "malicious/options_close_brace",
             "error: found nameless entry",
         ),
         (
             "options nested braces token",
-            "'/tmp/safe' [safe] (auto,{pre})\n",
+            "malicious/options_nested_braces",
             "error: found nameless entry",
         ),
         (
             "options nested brackets token",
-            "'/tmp/safe' [safe] (auto,[pre])\n",
+            "malicious/options_nested_brackets",
             "error: found nameless entry",
         ),
         (
             "options nested parentheses token",
-            "'/tmp/safe' [safe] (auto,(pre))\n",
+            "malicious/options_nested_parentheses",
             "error: found nameless entry",
         ),
         (
             "options missing closing parenthesis",
-            "'/tmp/safe' [safe] (auto\n",
+            "malicious/options_missing_closing_parenthesis",
             "error: found nameless entry",
         ),
         (
             "options missing opening parenthesis",
-            "'/tmp/safe' [safe] auto)\n",
+            "malicious/options_missing_opening_parenthesis",
             "error: found nameless entry",
         ),
         (
             "backtick in location",
-            "'/tmp/`evil`' [bad] (auto)\n",
+            "malicious/location_backtick",
             "error: invalid stored location '/tmp/`evil`'",
         ),
         (
             "asymmetric backtick in location",
-            "'/tmp/evil`' [bad] (auto)\n",
+            "malicious/location_asymmetric_backtick",
             "error: invalid stored location '/tmp/evil`'",
         ),
         (
             "name contains backtick",
-            "'/tmp/safe' [ba`d] (auto)\n",
+            "malicious/name_backtick",
             "error: invalid name 'ba`d'",
         ),
         (
             "options contain backtick",
-            "'/tmp/safe' [safe] (au`to)\n",
+            "malicious/options_backtick",
             "error: found nameless entry",
         ),
         (
             "semicolon in location",
-            "'/tmp/ev;il' [bad] (auto)\n",
+            "malicious/location_semicolon",
             "error: invalid stored location '/tmp/ev;il'",
         ),
         (
             "dollar sign in location",
-            "'/tmp/$evil' [bad] (auto)\n",
+            "malicious/location_dollar",
             "error: invalid stored location '/tmp/$evil'",
         ),
         (
             "pipe in location",
-            "'/tmp/ev|il' [bad] (auto)\n",
+            "malicious/location_pipe",
             "error: invalid stored location '/tmp/ev|il'",
         ),
         (
             "wildcard star in location",
-            "'/tmp/ev*il' [bad] (auto)\n",
+            "malicious/location_wildcard_star",
             "error: invalid stored location '/tmp/ev*il'",
         ),
         (
             "wildcard question mark in location",
-            "'/tmp/ev?il' [bad] (auto)\n",
+            "malicious/location_wildcard_question",
             "error: invalid stored location '/tmp/ev?il'",
         ),
         (
             "ampersand in location",
-            "'/tmp/ev&il' [bad] (auto)\n",
+            "malicious/location_ampersand",
             "error: invalid stored location '/tmp/ev&il'",
         ),
         (
             "redirect less-than in location",
-            "'/tmp/ev<il' [bad] (auto)\n",
+            "malicious/location_redirect_less",
             "error: invalid stored location '/tmp/ev<il'",
         ),
         (
             "redirect greater-than in location",
-            "'/tmp/ev>il' [bad] (auto)\n",
+            "malicious/location_redirect_greater",
             "error: invalid stored location '/tmp/ev>il'",
         ),
         (
             "hash in location",
-            "'/tmp/ev#il' [bad] (auto)\n",
+            "malicious/location_hash",
             "error: invalid stored location '/tmp/ev#il'",
         ),
     ];
 
-    for (label, line, expected_stderr) in cases {
+    for (label, fixture_name, expected_stderr) in cases {
         let temp = tempdir().unwrap();
         let dir = temp.path();
-        let store = dir.join(".path");
-        fs::write(&store, line).unwrap();
+        copy_fixture_to_temp_store(dir, fixture_name).unwrap();
 
         let mut cmd = test_cmd(dir, "");
         let assert = cmd.arg("list").assert().failure();
