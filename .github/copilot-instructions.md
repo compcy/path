@@ -37,6 +37,8 @@
 - The file format for stored paths is `'<location>' [name] (options)`, where `location` is the path being stored, `name` is an optional identifier for the path, and `options` can include `auto`, `noauto`, `pre`, and `protect`.
 - All names must be unique and cannot contain whitespace or shell metacharacters. They should be descriptive of the path's purpose (e.g. `cargo`, `pipx`).
 - `README.md` should be updated to reflect any changes to the file format or CLI usage. Use clear sections with bullet points and code blocks; avoid large blocks of prose.
+- `README.md` should be updated to reflect any changes to the file format, CLI usage, or user-visible CLI output format (for example new columns, headers, markers, or field semantics in `path list --pretty`).
+- When adding or renaming test fixtures, keep fixture documentation synchronized (for example `tests/paths/README.md`) and add or update tests that fail when docs and fixture files diverge.
 - Stored locations must be absolute, canonical-looking paths (no `.`/`..`, no trailing slash except `/`, no `:` or shell metacharacters).
 - The store file always begins with the header comment: `# layout: '<location>' [<name>] (<options>)`.
 - `path list` output uses unquoted locations: `<location> [<name>] (<options>)`.
