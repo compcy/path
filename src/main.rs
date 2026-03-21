@@ -20,6 +20,7 @@ struct PathEntry {
     autoset: bool,
     prepend: bool,
     protect: bool,
+    invalid_option: Option<String>,
     line_number: usize,
 }
 
@@ -81,18 +82,36 @@ fn parse_name_field(value: &str) -> Option<String> {
 
 /// Decode entry options from the third field.
 ///
+/// Result for decoding a store entry options field.
+enum EntryOptionsParseResult {
+    Valid {
+        autoset: bool,
+        prepend: bool,
+        protect: bool,
+    },
+    InvalidToken(String),
+    Malformed,
+}
+
 /// Supported options include autoset (`auto`/`noauto`), placement
 /// (`pre`/`post`), and protection (`protect`). Options may be comma-delimited
-/// and wrapped in `()`. Unknown options are rejected and make the entry
-/// malformed.
-fn parse_entry_options(value: &str) -> Option<(bool, bool, bool)> {
-    let normalized = value
+/// and wrapped in `()`. Unknown alphabetic option tokens are captured for
+/// validation; malformed option shapes are rejected.
+fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
+    let normalized = match value
         .strip_prefix('(')
-        .and_then(|inner| inner.strip_suffix(')'))?
-        .trim();
+        .and_then(|inner| inner.strip_suffix(')'))
+    {
+        Some(raw) => raw.trim(),
+        None => return EntryOptionsParseResult::Malformed,
+    };
 
     if normalized.is_empty() {
-        return Some((true, false, false));
+        return EntryOptionsParseResult::Valid {
+            autoset: true,
+            prepend: false,
+            protect: false,
+        };
     }
 
     let mut autoset = true;
@@ -115,12 +134,22 @@ fn parse_entry_options(value: &str) -> Option<(bool, bool, bool)> {
             "protect" => protect = true,
             other => {
                 eprintln!("warning: invalid entry option '{}', rejecting entry", other);
-                return None;
+                if other
+                    .chars()
+                    .all(|character| character.is_ascii_alphabetic())
+                {
+                    return EntryOptionsParseResult::InvalidToken(other.to_string());
+                }
+                return EntryOptionsParseResult::Malformed;
             }
         }
     }
 
-    Some((autoset, prepend, protect))
+    EntryOptionsParseResult::Valid {
+        autoset,
+        prepend,
+        protect,
+    }
 }
 
 /// Render the option marker list for a stored entry.
@@ -161,13 +190,7 @@ fn quote_store_location_field(field: &str) -> String {
 fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
     let trimmed = line.trim();
 
-    // skip blank lines entirely
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    // allow comments in the store file (for example, the generated header)
-    if trimmed.starts_with('#') {
+    if trimmed.is_empty() || trimmed.starts_with('#') {
         return None;
     }
 
@@ -184,6 +207,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                     autoset: true,
                     prepend: false,
                     protect: false,
+                    invalid_option: None,
                     line_number,
                 },
                 (None, _) => {
@@ -197,6 +221,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         autoset: true,
                         prepend: false,
                         protect: false,
+                        invalid_option: None,
                         line_number,
                     }
                 }
@@ -211,6 +236,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         autoset: true,
                         prepend: false,
                         protect: false,
+                        invalid_option: None,
                         line_number,
                     }
                 }
@@ -220,15 +246,36 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
             let parsed_location = unquote_single_quoted(location);
             let parsed_name = parse_name_field(name);
             let parsed_options = parse_entry_options(options);
+
             match (parsed_location, parsed_name, parsed_options) {
-                (Some(location), Some(name), Some((autoset, prepend, protect))) => PathEntry {
+                (
+                    Some(location),
+                    Some(name),
+                    EntryOptionsParseResult::Valid {
+                        autoset,
+                        prepend,
+                        protect,
+                    },
+                ) => PathEntry {
                     location: strip_trailing_slash(location),
                     name,
                     autoset,
                     prepend,
                     protect,
+                    invalid_option: None,
                     line_number,
                 },
+                (Some(location), Some(name), EntryOptionsParseResult::InvalidToken(option)) => {
+                    PathEntry {
+                        location: strip_trailing_slash(location),
+                        name,
+                        autoset: true,
+                        prepend: false,
+                        protect: false,
+                        invalid_option: Some(option),
+                        line_number,
+                    }
+                }
                 (None, _, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
@@ -240,6 +287,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         autoset: true,
                         prepend: false,
                         protect: false,
+                        invalid_option: None,
                         line_number,
                     }
                 }
@@ -254,10 +302,11 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         autoset: true,
                         prepend: false,
                         protect: false,
+                        invalid_option: None,
                         line_number,
                     }
                 }
-                (_, _, None) => {
+                (_, _, EntryOptionsParseResult::Malformed) => {
                     eprintln!(
                         "warning: malformed entry at line {}: options must be wrapped in '(' and ')'",
                         line_number
@@ -268,6 +317,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         autoset: true,
                         prepend: false,
                         protect: false,
+                        invalid_option: None,
                         line_number,
                     }
                 }
@@ -284,6 +334,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                 autoset: true,
                 prepend: false,
                 protect: false,
+                invalid_option: None,
                 line_number,
             }
         }
@@ -298,6 +349,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                 autoset: true,
                 prepend: false,
                 protect: false,
+                invalid_option: None,
                 line_number,
             }
         }
@@ -322,6 +374,7 @@ fn load_entries(store_file: &Path) -> io::Result<Vec<PathEntry>> {
     if !store_file.exists() {
         return Ok(Vec::new());
     }
+
     let file = fs::File::open(store_file)?;
     let reader = io::BufReader::new(file);
     let mut entries = Vec::new();
@@ -351,24 +404,21 @@ fn save_entries(store_file: &Path, entries: &[PathEntry]) -> io::Result<()> {
     fs::write(store_file, data)
 }
 
-/// Entry point for the `path` utility.
-///
-/// Parses command-line arguments, handles the `add` subcommand (recording
-/// entries and emitting the modified PATH string), or otherwise prints the
-/// current `PATH` environment variable.  The function is intentionally kept
-/// small; helper routines above manage persistence to the configured store file.
 /// Check the existing entries, reporting any whose `location` does not
-/// currently exist.  Nameless/invalid/duplicate names are fatal errors;
-/// missing locations are warnings only. Returns an I/O error only if
-/// reading fails.
+/// currently exist. Nameless/invalid/duplicate names are fatal errors; missing
+/// locations are warnings only.
 fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry]) {
-    // Ensure there are no entries without a name.  If one is discovered we
-    // treat this as a fatal error: the user should correct or remove the
-    // offending line manually.  We print the location so they know which line
-    // to fix and then exit with non-zero status.
-    // If we encounter any stored entry without a name, that's a fatal
-    // configuration error.  Clippy warns about a loop that always exits, so
-    // we use `find` instead of iterating explicitly.
+    if let Some(e) = entries.iter().find(|entry| entry.invalid_option.is_some()) {
+        let invalid_option = e.invalid_option.as_deref().unwrap_or("<unknown>");
+        eprintln!(
+            "error: invalid entry option '{}' at line {} in {}",
+            invalid_option,
+            e.line_number,
+            store_file.display()
+        );
+        std::process::exit(1);
+    }
+
     if let Some(e) = entries.iter().find(|e| e.name.is_empty()) {
         eprintln!(
             "error: found nameless entry in {} at line {}: '{}'",
@@ -379,8 +429,6 @@ fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry]) {
         std::process::exit(1);
     }
 
-    // Stored locations must be absolute and canonical-looking so command
-    // handlers can avoid repeated canonicalization.
     if let Some(e) = entries
         .iter()
         .find(|e| !is_store_location_canonical_like(&e.location))
@@ -394,7 +442,6 @@ fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry]) {
         std::process::exit(1);
     }
 
-    // Check for invalid names (must be alphanumeric)
     if let Some(e) = entries.iter().find(|e| !is_valid_name(&e.name)) {
         eprintln!(
             "error: invalid name '{}' at line {}: names must contain only alphanumeric characters",
@@ -403,15 +450,14 @@ fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry]) {
         std::process::exit(1);
     }
 
-    // Check for duplicate names and report all occurrences with their line
-    // numbers so the user can resolve the conflict.
     let mut seen_names = std::collections::HashMap::new();
-    for e in entries.iter() {
+    for e in entries {
         seen_names
             .entry(&e.name)
             .or_insert_with(Vec::new)
             .push(e.line_number);
     }
+
     let duplicates: Vec<_> = seen_names
         .iter()
         .filter(|(_, lines)| lines.len() > 1)
@@ -431,7 +477,6 @@ fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry]) {
         std::process::exit(1);
     }
 
-    // Warn about paths that don't exist, but do not delete them automatically
     let invalid: Vec<&PathEntry> = entries
         .iter()
         .filter(|e| !Path::new(&e.location).exists())
@@ -835,6 +880,7 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
                     autoset,
                     prepend,
                     protect,
+                    invalid_option: None,
                     line_number: 0,
                 });
 
@@ -1283,6 +1329,7 @@ mod tests {
             autoset: true,
             prepend: false,
             protect: false,
+            invalid_option: None,
             line_number: 1,
         }];
         assert_eq!(
@@ -1301,6 +1348,7 @@ mod tests {
             autoset: true,
             prepend: false,
             protect: false,
+            invalid_option: None,
             line_number: 0,
         };
         assert_eq!(format_list_entry(&entry), "/usr/local/bin [tools] (auto)");
@@ -1311,6 +1359,7 @@ mod tests {
             autoset: false,
             prepend: false,
             protect: false,
+            invalid_option: None,
             line_number: 0,
         };
         assert_eq!(format_list_entry(&same), "/usr/bin [/usr/bin] (noauto)");
@@ -1321,6 +1370,7 @@ mod tests {
             autoset: true,
             prepend: true,
             protect: false,
+            invalid_option: None,
             line_number: 0,
         };
         assert_eq!(format_list_entry(&pre), "/opt/pre [pre] (auto,pre)");
@@ -1331,6 +1381,7 @@ mod tests {
             autoset: true,
             prepend: false,
             protect: true,
+            invalid_option: None,
             line_number: 0,
         };
         assert_eq!(
@@ -1412,7 +1463,8 @@ mod tests {
     /// Ensure legacy `postfix` placement option is rejected.
     fn parse_entry_line_postfix_option_is_rejected() {
         let entry = parse_entry_line("'/tmp/tools' [tools] (postfix)", 2).unwrap();
-        assert_eq!(entry.name, "");
+        assert_eq!(entry.name, "tools");
+        assert_eq!(entry.invalid_option.as_deref(), Some("postfix"));
     }
 
     #[test]
@@ -1458,6 +1510,7 @@ mod tests {
             autoset: true,
             prepend: false,
             protect: false,
+            invalid_option: None,
             line_number: 0,
         };
         assert_eq!(format_entry_line(&auto), "'/tmp/a' [a] (auto)");
@@ -1468,6 +1521,7 @@ mod tests {
             autoset: false,
             prepend: false,
             protect: false,
+            invalid_option: None,
             line_number: 0,
         };
         assert_eq!(format_entry_line(&noauto), "'/tmp/b' [b] (noauto)");
@@ -1478,6 +1532,7 @@ mod tests {
             autoset: true,
             prepend: true,
             protect: false,
+            invalid_option: None,
             line_number: 0,
         };
         assert_eq!(format_entry_line(&pre), "'/tmp/c' [c] (auto,pre)");
@@ -1488,6 +1543,7 @@ mod tests {
             autoset: true,
             prepend: false,
             protect: true,
+            invalid_option: None,
             line_number: 0,
         };
         assert_eq!(format_entry_line(&protect), "'/tmp/d' [d] (auto,protect)");
@@ -1502,6 +1558,7 @@ mod tests {
             autoset: true,
             prepend: false,
             protect: false,
+            invalid_option: None,
             line_number: 0,
         };
         assert_eq!(format_entry_line(&spaced), "'/tmp/my tools' [tools] (auto)");
@@ -1512,6 +1569,7 @@ mod tests {
             autoset: true,
             prepend: false,
             protect: false,
+            invalid_option: None,
             line_number: 0,
         };
         assert_eq!(

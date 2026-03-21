@@ -1493,6 +1493,33 @@ fn verify_surfaces_validation_failures() {
     assert!(stderr.contains("error: duplicate name 'dup'"));
 }
 
+/// `verify` should fail when an entry contains an unknown or misspelled option.
+#[test]
+fn verify_fails_for_unknown_or_misspelled_option() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    for option in ["autoo", "protec"] {
+        let store = dir.join(".path");
+        fs::write(&store, format!("'/tmp/safe' [safe] ({})\n", option)).unwrap();
+
+        let mut cmd = cargo::cargo_bin_cmd!("path");
+        cmd.current_dir(dir)
+            .arg("--file")
+            .arg(&store)
+            .env("PATH", "");
+        let assert = cmd.arg("verify").assert().failure();
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+        assert!(stderr.contains("error: invalid entry option"));
+        assert!(
+            stderr.contains(option),
+            "stderr should include invalid option '{}': {}",
+            option,
+            stderr
+        );
+    }
+}
+
 /// `verify` should fail when the configured store file does not exist.
 #[test]
 fn verify_fails_when_store_file_is_missing() {

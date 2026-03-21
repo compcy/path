@@ -143,6 +143,7 @@ Entries are persisted to `$HOME/.path` by default (or the file passed with
 `'location' [name] (options)` with fields separated by whitespace, where options
 can include `auto` or `noauto`, optional placement `pre`, and optional protection `protect`.
 If `pre` is not specified, `post` (append) behavior is assumed.
+Unknown or misspelled option tokens (for example `autoo`) are invalid and cause validation to fail.
 Older unwrapped forms such as `location name auto` are treated as malformed.
 If the third field is missing, it is treated as `auto`. (The name field is
 mandatory, and the tool refuses to start if it finds a line without a valid
