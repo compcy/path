@@ -71,6 +71,7 @@ fn assert_pretty_output_has_unique_names(output: &str) {
     );
 }
 
+/// Ensure pretty-output name extraction skips blank name cells.
 #[test]
 fn pretty_output_names_extracts_non_blank_names() {
     let output = "PATH  NAME\n----  ----\n/usr/bin  usrbin\n/bin  sysbin\n/unknown/path\n";
@@ -81,6 +82,7 @@ fn pretty_output_names_extracts_non_blank_names() {
     );
 }
 
+/// Ensure the uniqueness assertion permits rows with no pretty-print name.
 #[test]
 fn assert_pretty_output_has_unique_names_accepts_blank_names() {
     let output = "PATH  NAME\n----  ----\n/usr/bin  usrbin\n/unknown/path\n";
@@ -88,12 +90,76 @@ fn assert_pretty_output_has_unique_names_accepts_blank_names() {
     assert_pretty_output_has_unique_names(output);
 }
 
+/// Ensure the uniqueness assertion fails when duplicate names appear.
 #[test]
 fn assert_pretty_output_has_unique_names_rejects_duplicates() {
     let output = "PATH  NAME\n----  ----\n/usr/bin  dup\n/bin  dup\n";
 
     let result = std::panic::catch_unwind(|| assert_pretty_output_has_unique_names(output));
     assert!(result.is_err());
+}
+
+/// Ensure fixture_path resolves to the expected file under tests/paths.
+#[test]
+fn fixture_path_points_into_tests_paths() {
+    assert_eq!(
+        fixture_path("auto_noauto"),
+        Path::new("tests").join("paths").join("auto_noauto.path")
+    );
+}
+
+/// Ensure fixture copying writes the selected fixture to the temp store file.
+#[test]
+fn copy_fixture_to_temp_store_copies_fixture_contents() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let expected = fs::read_to_string(fixture_path("auto_noauto")).unwrap();
+    copy_fixture_to_temp_store(dir, "auto_noauto").unwrap();
+
+    let copied = fs::read_to_string(dir.join(".path")).unwrap();
+    assert_eq!(copied, expected);
+}
+
+/// Ensure get_stdout returns the command's stdout text unchanged.
+#[test]
+fn get_stdout_returns_stdout_text() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "foo:bar");
+    let out = get_stdout(&mut cmd);
+
+    assert_eq!(out.trim(), "export PATH='foo:bar'");
+}
+
+/// Ensure get_stderr returns the command's stderr text for failures.
+#[test]
+fn get_stderr_returns_stderr_text() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "");
+    cmd.arg("verify");
+    let stderr = get_stderr(&mut cmd);
+
+    assert!(stderr.contains("error: store file does not exist"));
+}
+
+/// Ensure test_cmd wires both the provided PATH and the configured store file.
+#[test]
+fn test_cmd_uses_provided_path_and_store_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join(".path"), "'/tmp/helper' [helper] (auto)\n").unwrap();
+
+    let mut path_cmd = test_cmd(dir, "alpha:beta");
+    let path_out = get_stdout(&mut path_cmd);
+    assert_eq!(path_out.trim(), "export PATH='alpha:beta'");
+
+    let mut list_cmd = test_cmd(dir, "");
+    let list_out = get_stdout(list_cmd.arg("list"));
+    assert!(list_out.contains("/tmp/helper [helper] (auto)"));
 }
 
 /// Runs a command that is expected to fail and returns stderr as UTF-8 text.
