@@ -934,6 +934,102 @@ fn add_with_protect_stores_protect_marker() {
     assert!(contents.contains("'/tmp/protect' [protectentry] (auto,protect)"));
 }
 
+/// `restore` should add the standard protected system paths to PATH.
+#[test]
+fn restore_adds_standard_system_paths_to_path() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "");
+    let output = cmd
+        .arg("restore")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+
+    assert_eq!(
+        out_str.trim(),
+        "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin'"
+    );
+}
+
+/// `restore` should not persist the built-in protected system paths to the store file.
+#[test]
+fn restore_does_not_persist_system_paths_to_store() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "");
+    cmd.arg("restore");
+    cmd.assert().success();
+
+    assert!(!dir.join(".path").exists());
+}
+
+/// `restore` should be idempotent when system paths are already present.
+#[test]
+fn restore_does_not_duplicate_existing_system_paths() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd: assert_cmd::Command = test_cmd(
+        dir,
+        "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",
+    );
+    let output = cmd
+        .arg("restore")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+
+    assert_eq!(
+        out_str.trim(),
+        "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin'"
+    );
+}
+
+/// `remove` should reject built-in protected system paths by reserved name.
+#[test]
+fn remove_rejects_builtin_system_path_name() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "/bin:/usr/bin");
+    let assert = cmd.arg("remove").arg("sysbin").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("system path '/bin' (sysbin) is protected"));
+}
+
+/// `remove` should reject built-in protected system paths by direct path.
+#[test]
+fn remove_rejects_builtin_system_path_location() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "/bin:/usr/bin");
+    let assert = cmd.arg("remove").arg("/bin").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("system path '/bin' (sysbin) is protected"));
+}
+
+/// Built-in system path names should be reserved and unavailable for stored entries.
+#[test]
+fn add_rejects_reserved_system_path_name() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "");
+    cmd.arg("add").arg("/tmp/tools").arg("sysbin");
+    let stderr = get_stderr(&mut cmd);
+    assert!(stderr.contains("name 'sysbin' is reserved for a protected system path"));
+}
+
 /// `list` should read quoted locations containing literal spaces.
 #[test]
 fn list_reads_quoted_location_with_spaces() {

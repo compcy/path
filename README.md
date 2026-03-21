@@ -83,6 +83,7 @@ Global option:
   - Trailing `/` is stripped from path arguments (except `/` itself).
   - If the path exists, it must be a directory (files are rejected).
   - If `name` is provided, it must be alphanumeric and unique.
+  - Built-in system-path names are reserved and cannot be used for stored entries: `sysbin`, `syssbin`, `usrbin`, `usrsbin`, `usrlocalbin`, `usrlocalsbin`.
   - Use `--noauto` to store a named entry that should not be included by `path load`.
   - Use `--protect` to store a named entry that `path remove` must not remove by name or by direct path.
   - Only entries with an explicit `name` are written to the configured store file.
@@ -92,6 +93,7 @@ Global option:
 - `path remove <location-or-name>` — remove from PATH only
   - If the argument matches a stored short name, its location is removed from PATH.
   - Stored entries marked `protect` fail instead of being removed, whether addressed by stored name or direct path.
+  - Built-in protected system paths also fail instead of being removed, whether addressed by reserved name (`sysbin`, `syssbin`, `usrbin`, `usrsbin`, `usrlocalbin`, `usrlocalsbin`) or by direct path.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`).
   - This command does not modify `.path`.
 - `path delete <location-or-name>` — delete from the configured store file only
@@ -105,6 +107,9 @@ Global option:
 - `path verify` — validate configured store entries and print `Path file is valid.` when validation passes
   - If the configured store file does not exist or has no entries, it fails.
   - On validation failure, it prints the failure details and exits non-zero.
+- `path restore` — restore a built-in set of protected system paths into PATH without persisting them
+  - Restores: `/bin` (`sysbin`), `/sbin` (`syssbin`), `/usr/bin` (`usrbin`), `/usr/sbin` (`usrsbin`), `/usr/local/bin` (`usrlocalbin`), `/usr/local/sbin` (`usrlocalsbin`).
+  - Missing system paths are appended to the current PATH in that order.
 
 **Startup validation note:** when reading `.path`, the tool aborts if it finds:
 - a nameless entry,
@@ -130,6 +135,7 @@ path remove home                     # remove from PATH by stored short name
 path delete home                     # delete stored entry from .path by name
 path load                            # add only entries marked auto (usually automatic at shell startup)
 path verify                          # validate .path contents and report status
+path restore                         # restore built-in protected system paths to PATH
 
 # invalid unless "foo" is a stored name
 path add foo

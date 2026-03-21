@@ -27,6 +27,54 @@ struct PathEntry {
 const DEFAULT_STORE_FILE_NAME: &str = ".path";
 const STORE_FILE_LAYOUT_COMMENT: &str = "# layout: '<location>' [<name>] (<options>)";
 
+/// Seed specification for a standard system PATH entry.
+struct SystemPathSeed {
+    location: &'static str,
+    name: &'static str,
+}
+
+/// Standard system paths managed by `path restore`.
+const STANDARD_SYSTEM_PATHS: &[SystemPathSeed] = &[
+    SystemPathSeed {
+        location: "/bin",
+        name: "sysbin",
+    },
+    SystemPathSeed {
+        location: "/sbin",
+        name: "syssbin",
+    },
+    SystemPathSeed {
+        location: "/usr/bin",
+        name: "usrbin",
+    },
+    SystemPathSeed {
+        location: "/usr/sbin",
+        name: "usrsbin",
+    },
+    SystemPathSeed {
+        location: "/usr/local/bin",
+        name: "usrlocalbin",
+    },
+    SystemPathSeed {
+        location: "/usr/local/sbin",
+        name: "usrlocalsbin",
+    },
+];
+
+/// Return the built-in protected system entry matching a reserved name.
+fn find_system_path_by_name(name: &str) -> Option<&'static SystemPathSeed> {
+    STANDARD_SYSTEM_PATHS
+        .iter()
+        .find(|entry| entry.name == name)
+}
+
+/// Return the built-in protected system entry matching a location.
+fn find_system_path_by_location(location: &str) -> Option<&'static SystemPathSeed> {
+    STANDARD_SYSTEM_PATHS
+        .iter()
+        .find(|entry| strip_trailing_slash(entry.location) == strip_trailing_slash(location))
+}
+
 /// Return the default store file path.
 ///
 /// The default is `$HOME/.path`; if `HOME` is unavailable we fall back to a
@@ -563,6 +611,10 @@ fn build_cli() -> App<'static, 'static> {
             SubCommand::with_name("verify")
                 .about("Validate configured store entries and report status"),
         )
+        .subcommand(
+            SubCommand::with_name("restore")
+                .about("Restore standard protected system paths into PATH"),
+        )
 }
 
 /// Resolve a user-provided token to a stored location when it matches a name.
@@ -841,6 +893,14 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
             std::process::exit(1);
         }
 
+        if find_system_path_by_name(&name).is_some() {
+            eprintln!(
+                "error: name '{}' is reserved for a protected system path",
+                name
+            );
+            std::process::exit(1);
+        }
+
         if let Some(mut entries) = load_entries_or_warn(
             store_file,
             "failed to load store file, not updating named entries",
@@ -892,6 +952,15 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
 /// segments from PATH, and prints the resulting export command.
 fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
     let argument = remove_matches.value_of("location").unwrap().to_string();
+
+    if let Some(system_entry) = find_system_path_by_name(&argument) {
+        eprintln!(
+            "error: system path '{}' ({}) is protected and cannot be removed with 'path remove'",
+            system_entry.location, system_entry.name
+        );
+        std::process::exit(1);
+    }
+
     let mut location_to_remove = argument.clone();
     let mut resolved_by_name = false;
     let loaded_entries = load_entries(store_file).ok();
@@ -915,6 +984,14 @@ fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
     if !resolved_by_name {
         location_to_remove = validate_and_canonicalize_cli_path_argument(&argument);
         raw_path_arg = Some(argument.as_str());
+
+        if let Some(system_entry) = find_system_path_by_location(&location_to_remove) {
+            eprintln!(
+                "error: system path '{}' ({}) is protected and cannot be removed with 'path remove'",
+                system_entry.location, system_entry.name
+            );
+            std::process::exit(1);
+        }
 
         if let Some(entries) = loaded_entries.as_ref() {
             if let Some(entry) = entries
@@ -1019,6 +1096,20 @@ fn handle_verify(store_file: &Path) {
     println!("Path file is valid.");
 }
 
+/// Restore the built-in protected system path entries to PATH without
+/// persisting them to the store file.
+fn handle_restore() {
+    let mut current = env::var("PATH").unwrap_or_default();
+
+    for system_entry in STANDARD_SYSTEM_PATHS {
+        if !path_contains_segment(&current, system_entry.location) {
+            current = compose_path(&current, system_entry.location, false);
+        }
+    }
+
+    println!("{}", format_export_path(&current));
+}
+
 /// Print the current PATH value as a shell export statement.
 fn print_current_path() {
     match env::var("PATH") {
@@ -1066,6 +1157,11 @@ fn main() {
 
     if matches.subcommand_matches("load").is_some() {
         handle_load(&store_file);
+        return;
+    }
+
+    if matches.subcommand_matches("restore").is_some() {
+        handle_restore();
         return;
     }
 
