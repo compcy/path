@@ -6,7 +6,18 @@
 // functions, as this ensures the CLI remains stable.
 use assert_cmd::cargo;
 use std::fs;
+use std::path::Path;
 use tempfile::tempdir;
+
+/// Helper to construct a test command with standard directory and store file setup.
+fn test_cmd(dir: &Path, path_env: &str) -> assert_cmd::Command {
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", path_env);
+    cmd
+}
 
 /// Confirm that, with no subcommands, the utility simply echoes the
 /// value of the `PATH` environment variable.
@@ -18,9 +29,7 @@ fn prints_path_env() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir).arg("--file").arg(dir.join(".path"));
-    cmd.env("PATH", "foo:bar");
+    let mut cmd = test_cmd(dir, "foo:bar");
     let output = cmd.assert().success().get_output().stdout.clone();
     let out_str = String::from_utf8_lossy(&output);
     assert!(out_str.contains("export PATH='"));
@@ -51,11 +60,7 @@ fn add_writes_layout_comment_when_creating_store_file() {
     let dir = temp.path();
     let store = dir.join(".path");
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(&store)
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("add").arg("/tmp/layout").arg("layout");
     cmd.assert().success();
 
@@ -93,9 +98,7 @@ fn add_appends_but_only_records_with_name() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir).arg("--file").arg(dir.join(".path"));
-    cmd.env("PATH", "A");
+    let mut cmd = test_cmd(dir, "A");
     let output = cmd
         .arg("add")
         .arg("/tmp/x")
@@ -121,9 +124,7 @@ fn add_with_name_and_prepend() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir).arg("--file").arg(dir.join(".path"));
-    cmd.env("PATH", "B");
+    let mut cmd = test_cmd(dir, "B");
     let output = cmd
         .arg("add")
         .arg("--pre")
@@ -155,21 +156,9 @@ fn add_with_spaced_location_round_trips_through_store_and_output() {
         .to_string_lossy()
         .into_owned();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "/usr/bin");
-    let output = cmd
-        .arg("add")
-        .arg("./my tools")
-        .arg("mytools")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let out_str = String::from_utf8_lossy(&output);
+    let mut cmd = test_cmd(dir, "/usr/bin");
+    cmd.arg("add").arg("--pre").arg("/tmp/y").arg("yname");
+    let out_str = get_stdout(&mut cmd);
     assert_eq!(
         out_str.trim(),
         format!("export PATH='/usr/bin:{}'", canonical)
@@ -180,11 +169,7 @@ fn add_with_spaced_location_round_trips_through_store_and_output() {
     let escaped_canonical = canonical.replace('\\', "\\\\").replace('\'', "\\'");
     assert!(contents.contains(&format!("'{}' [mytools] (auto)", escaped_canonical)));
 
-    let mut cmd2 = cargo::cargo_bin_cmd!("path");
-    cmd2.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd2 = test_cmd(dir, "");
     let output2 = cmd2
         .arg("add")
         .arg("mytools")
@@ -204,29 +189,16 @@ fn list_shows_entries() {
     let dir = temp.path();
 
     // add two entries; only the named one should be stored
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("add").arg("/foo").arg("foo");
     cmd.assert().success();
 
-    let mut cmd2 = cargo::cargo_bin_cmd!("path");
-    cmd2.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd2 = test_cmd(dir, "");
     cmd2.arg("add").arg("/bar");
     cmd2.assert().success();
 
     // run list and inspect output; /bar should not appear because it had no name
-    let mut list_cmd = cargo::cargo_bin_cmd!("path");
-    list_cmd
-        .current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut list_cmd = test_cmd(dir, "");
     let output = list_cmd
         .arg("list")
         .assert()
@@ -247,11 +219,7 @@ fn list_shows_noauto_status() {
     let store = dir.join(".path");
     fs::write(&store, "'/opt/auto' [a] (auto)\n'/opt/no' [n] (noauto)\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let output = cmd
         .arg("list")
         .assert()
@@ -270,11 +238,7 @@ fn list_reports_missing_store_file() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let output = cmd
         .arg("list")
         .assert()
@@ -294,11 +258,7 @@ fn list_reports_empty_store_file() {
     let store = dir.join(".path");
     fs::write(&store, "").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let output = cmd
         .arg("list")
         .assert()
@@ -324,11 +284,7 @@ fn invalid_entries_are_warned_about() {
     )
     .unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("list");
     let assert = cmd.assert().success();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
@@ -356,11 +312,7 @@ fn nameless_entry_causes_error() {
     )
     .unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("list").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: found nameless entry"));
@@ -382,20 +334,12 @@ fn duplicate_names_are_rejected() {
     let dir = temp.path();
 
     // first add with name "myname"
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("add").arg("/tmp").arg("myname");
     cmd.assert().success();
 
     // second add with the same name "myname" should fail
-    let mut cmd2 = cargo::cargo_bin_cmd!("path");
-    cmd2.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd2 = test_cmd(dir, "");
     cmd2.arg("add").arg("/usr/local/bin").arg("myname");
     let assert = cmd2.assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
@@ -422,11 +366,7 @@ fn duplicate_names_in_file_cause_error() {
     )
     .unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("list").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: duplicate name 'dup'"));
@@ -445,14 +385,9 @@ fn invalid_names_are_rejected() {
     let dir = temp.path();
 
     // try adding with a name containing spaces
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("add").arg("/tmp").arg("my name");
-    let assert = cmd.assert().failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    let stderr = get_stderr(&mut cmd);
     assert!(stderr.contains("error: invalid name 'my name'"));
     assert!(stderr.contains("alphanumeric characters"));
 }
@@ -470,11 +405,7 @@ fn invalid_names_in_file_cause_error() {
     )
     .unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("list").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: invalid name 'invalid-name'"));
@@ -492,20 +423,12 @@ fn add_by_stored_name() {
     let dir = temp.path();
 
     // first add with name "mytools"
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("add").arg("/usr/local/bin").arg("mytools");
     cmd.assert().success();
 
     // now add by name "mytools" (should look it up and add /usr/local/bin)
-    let mut cmd2 = cargo::cargo_bin_cmd!("path");
-    cmd2.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd2 = test_cmd(dir, "");
     cmd2.arg("add").arg("mytools");
     let output = cmd2.assert().success().get_output().stdout.clone();
     let out_str = String::from_utf8_lossy(&output);
@@ -525,20 +448,12 @@ fn name_precedence_over_actual_path() {
     fs::create_dir(dir.join("x")).unwrap();
 
     // store an entry named "x" that points somewhere else
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("add").arg("/real/location").arg("x");
     cmd.assert().success();
 
     // now run `add x` -- it should use the stored path, not ./x
-    let mut cmd2 = cargo::cargo_bin_cmd!("path");
-    cmd2.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd2 = test_cmd(dir, "");
     let output = cmd2
         .arg("add")
         .arg("x")
@@ -560,22 +475,13 @@ fn enforce_path_format_for_add() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("add").arg("notvalid");
-    let assert = cmd.assert().failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    let stderr = get_stderr(&mut cmd);
     assert!(stderr.contains("must be absolute or start with '.'"));
 
     // starting with '.' is fine
-    let mut cmd2 = cargo::cargo_bin_cmd!("path");
-    cmd2.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd2 = test_cmd(dir, "");
     cmd2.arg("add").arg("./rel");
     cmd2.assert().success();
 }
@@ -586,14 +492,9 @@ fn add_rejects_colon_in_path_argument() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("add").arg("/tmp:evil");
-    let assert = cmd.assert().failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    let stderr = get_stderr(&mut cmd);
     assert!(stderr.contains("must not contain ':'"));
 }
 
@@ -603,14 +504,9 @@ fn add_rejects_backslash_in_path_argument() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("add").arg("/tmp\\evil");
-    let assert = cmd.assert().failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    let stderr = get_stderr(&mut cmd);
     assert!(stderr.contains("must not contain '\\\\'"));
 }
 
@@ -623,14 +519,9 @@ fn reject_file_locations() {
     let file = dir.join("f.txt");
     fs::write(&file, "hello").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("add").arg("./f.txt");
-    let assert = cmd.assert().failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    let stderr = get_stderr(&mut cmd);
     assert!(stderr.contains("exists but is not a directory"));
 }
 
@@ -642,11 +533,7 @@ fn remove_keeps_store_entries() {
     let store = dir.join(".path");
     fs::write(&store, "'/tmp' [home] (auto)\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "/tmp:/usr/bin");
+    let mut cmd = test_cmd(dir, "/tmp:/usr/bin");
     let output = cmd
         .arg("remove")
         .arg("home")
@@ -672,11 +559,7 @@ fn remove_rejects_protected_store_entry() {
     let store = dir.join(".path");
     fs::write(&store, "'/tmp' [home] (auto,protect)\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "/tmp:/usr/bin");
+    let mut cmd = test_cmd(dir, "/tmp:/usr/bin");
     let assert = cmd.arg("remove").arg("home").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("protected"));
@@ -693,11 +576,7 @@ fn remove_rejects_protected_store_path_argument() {
     let store = dir.join(".path");
     fs::write(&store, "'/tmp' [home] (auto,protect)\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "/tmp:/usr/bin");
+    let mut cmd = test_cmd(dir, "/tmp:/usr/bin");
     let assert = cmd.arg("remove").arg("/tmp").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("protected"));
@@ -714,11 +593,7 @@ fn delete_removes_store_entry_by_name() {
     let store = dir.join(".path");
     fs::write(&store, "'/tmp' [home] (auto)\n'/usr/bin' [sys] (auto)\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("delete").arg("home");
     cmd.assert().success();
 
@@ -735,11 +610,7 @@ fn remove_by_path_matches_raw_segment_too() {
 
     fs::create_dir(dir.join("rel")).unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "./rel:/usr/bin");
+    let mut cmd = test_cmd(dir, "./rel:/usr/bin");
     let output = cmd
         .arg("remove")
         .arg("./rel")
@@ -758,14 +629,9 @@ fn remove_rejects_colon_in_path_argument() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("remove").arg("/tmp:evil");
-    let assert = cmd.assert().failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    let stderr = get_stderr(&mut cmd);
     assert!(stderr.contains("must not contain ':'"));
 }
 
@@ -775,14 +641,9 @@ fn remove_rejects_backslash_in_path_argument() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("remove").arg("/tmp\\evil");
-    let assert = cmd.assert().failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    let stderr = get_stderr(&mut cmd);
     assert!(stderr.contains("must not contain '\\\\'"));
 }
 
@@ -793,11 +654,7 @@ fn list_fails_when_store_is_unreadable() {
     let dir = temp.path();
     fs::create_dir(dir.join(".path")).unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("list").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: failed to load entries"));
@@ -810,11 +667,7 @@ fn delete_fails_when_store_is_unreadable() {
     let dir = temp.path();
     fs::create_dir(dir.join(".path")).unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("delete").arg("home").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: failed to load entries"));
@@ -826,14 +679,9 @@ fn delete_rejects_colon_in_path_argument() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("delete").arg("/tmp:evil");
-    let assert = cmd.assert().failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    let stderr = get_stderr(&mut cmd);
     assert!(stderr.contains("must not contain ':'"));
 }
 
@@ -843,14 +691,9 @@ fn delete_rejects_backslash_in_path_argument() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("delete").arg("/tmp\\evil");
-    let assert = cmd.assert().failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    let stderr = get_stderr(&mut cmd);
     assert!(stderr.contains("must not contain '\\\\'"));
 }
 
@@ -864,21 +707,9 @@ fn add_dot_uses_canonical_path_in_output() {
         .to_string_lossy()
         .into_owned();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
-    let output = cmd
-        .arg("add")
-        .arg(".")
-        .arg("dot")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let out_str = String::from_utf8_lossy(&output);
+    let mut cmd = test_cmd(dir, "");
+    cmd.arg("add").arg("--pre").arg("/tmp/y").arg("yname");
+    let out_str = get_stdout(&mut cmd);
     assert_eq!(out_str.trim(), format!("export PATH='{}'", canonical));
 }
 
@@ -892,21 +723,9 @@ fn add_dot_does_not_duplicate_existing_entry() {
         .to_string_lossy()
         .into_owned();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", &canonical);
-    let output = cmd
-        .arg("add")
-        .arg(".")
-        .arg("dot")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let out_str = String::from_utf8_lossy(&output);
+    let mut cmd = test_cmd(dir, &canonical);
+    cmd.arg("add").arg("--pre").arg("/tmp/y").arg("yname");
+    let out_str = get_stdout(&mut cmd);
     assert_eq!(out_str.trim(), format!("export PATH='{}'", canonical));
 }
 
@@ -924,21 +743,9 @@ fn add_does_not_duplicate_trailing_slash_variant() {
     with_slash.push('/');
     let initial_path = format!("{}:/usr/bin", with_slash);
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", &initial_path);
-    let output = cmd
-        .arg("add")
-        .arg(".")
-        .arg("dot")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let out_str = String::from_utf8_lossy(&output);
+    let mut cmd = test_cmd(dir, &initial_path);
+    cmd.arg("add").arg("--pre").arg("/tmp/y").arg("yname");
+    let out_str = get_stdout(&mut cmd);
     assert_eq!(
         out_str.trim(),
         format!("export PATH='{}:/usr/bin'", with_slash)
@@ -953,11 +760,7 @@ fn list_normalizes_trailing_slash_from_store_file() {
     let store = dir.join(".path");
     fs::write(&store, "'/opt/tools/' [tools] (auto)\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let output = cmd
         .arg("list")
         .assert()
@@ -978,11 +781,7 @@ fn relative_stored_location_causes_error() {
     let store = dir.join(".path");
     fs::write(&store, "'./rel' [rel] (auto)\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("list").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: invalid stored location './rel'"));
@@ -996,11 +795,7 @@ fn noncanonical_stored_location_causes_error() {
     let store = dir.join(".path");
     fs::write(&store, "'/tmp/../tmp' [bad] (auto)\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("list").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: invalid stored location '/tmp/../tmp'"));
@@ -1014,11 +809,7 @@ fn stored_location_with_colon_causes_error() {
     let store = dir.join(".path");
     fs::write(&store, "'/tmp:evil' [bad] (auto)\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("list").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: invalid stored location '/tmp:evil'"));
@@ -1261,11 +1052,7 @@ fn list_rejects_delimiter_malicious_cases() {
         let store = dir.join(".path");
         fs::write(&store, line).unwrap();
 
-        let mut cmd = cargo::cargo_bin_cmd!("path");
-        cmd.current_dir(dir)
-            .arg("--file")
-            .arg(dir.join(".path"))
-            .env("PATH", "");
+        let mut cmd = test_cmd(dir, "");
         let assert = cmd.arg("list").assert().failure();
         let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
         assert!(
@@ -1284,11 +1071,7 @@ fn add_with_noauto_stores_noauto_marker() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("add")
         .arg("--noauto")
         .arg("/tmp/noauto")
@@ -1306,11 +1089,7 @@ fn add_with_protect_stores_protect_marker() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     cmd.arg("add")
         .arg("--protect")
         .arg("/tmp/protect")
@@ -1330,11 +1109,7 @@ fn list_reads_quoted_location_with_spaces() {
     let store = dir.join(".path");
     fs::write(&store, "'/opt/my tools' [tools] (auto)\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let output = cmd
         .arg("list")
         .assert()
@@ -1358,11 +1133,7 @@ fn load_adds_only_auto_entries() {
     )
     .unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let output = cmd
         .arg("load")
         .assert()
@@ -1389,11 +1160,7 @@ fn load_respects_pre_option_with_post_default() {
     )
     .unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "/usr/bin");
+    let mut cmd = test_cmd(dir, "/usr/bin");
     let output = cmd
         .arg("load")
         .assert()
@@ -1414,11 +1181,7 @@ fn list_rejects_legacy_space_separated_entries() {
     let store = dir.join(".path");
     fs::write(&store, "/opt/tools tools auto\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("list").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: found nameless entry"));
@@ -1432,11 +1195,7 @@ fn load_treats_blank_third_field_as_auto() {
     let store = dir.join(".path");
     fs::write(&store, "'/opt/manual' [manual]\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let output = cmd
         .arg("load")
         .assert()
@@ -1459,11 +1218,7 @@ fn verify_reports_success_when_entries_are_valid() {
     let location = dir.to_string_lossy();
     fs::write(&store, format!("'{}' [valid] (auto)\n", location)).unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let output = cmd
         .arg("verify")
         .assert()
@@ -1483,11 +1238,7 @@ fn verify_surfaces_validation_failures() {
     let store = dir.join(".path");
     fs::write(&store, "'/foo/a' [dup] (auto)\n'/foo/b' [dup] (auto)\n").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("verify").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: duplicate name 'dup'"));
@@ -1526,11 +1277,7 @@ fn verify_fails_when_store_file_is_missing() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("verify").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: store file does not exist"));
@@ -1544,11 +1291,7 @@ fn verify_fails_when_store_file_is_empty() {
     let store = dir.join(".path");
     fs::write(&store, "").unwrap();
 
-    let mut cmd = cargo::cargo_bin_cmd!("path");
-    cmd.current_dir(dir)
-        .arg("--file")
-        .arg(dir.join(".path"))
-        .env("PATH", "");
+    let mut cmd = test_cmd(dir, "");
     let assert = cmd.arg("verify").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("error: store file has no entries"));
