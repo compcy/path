@@ -1156,12 +1156,26 @@ fn handle_list(list_matches: &ArgMatches, store_file: &Path) {
             .map(|seg| resolve_segment_name(seg, &entries))
             .collect();
 
+        let types: Vec<String> = segments
+            .iter()
+            .map(|seg| resolve_segment_type(seg, &entries))
+            .collect();
+
+        let index_col_width = segments.len().to_string().len().max("#".len());
+
         let path_col_width = segments
             .iter()
             .map(|s| s.len())
             .max()
             .unwrap_or(0)
             .max("PATH".len());
+
+        let type_col_width = types
+            .iter()
+            .map(|t| t.len())
+            .max()
+            .unwrap_or(0)
+            .max("TYPE".len());
 
         let name_col_width = names
             .iter()
@@ -1170,21 +1184,42 @@ fn handle_list(list_matches: &ArgMatches, store_file: &Path) {
             .unwrap_or(0)
             .max("NAME".len());
 
-        println!("{:<path_width$}  NAME", "PATH", path_width = path_col_width);
         println!(
-            "{:-<path_width$}  {:-<name_width$}",
-            "",
-            "",
+            "{:<index_width$}  {:<path_width$}  {:<type_width$}  NAME",
+            "#",
+            "PATH",
+            "TYPE",
+            index_width = index_col_width,
             path_width = path_col_width,
+            type_width = type_col_width
+        );
+        println!(
+            "{:-<index_width$}  {:-<path_width$}  {:-<type_width$}  {:-<name_width$}",
+            "",
+            "",
+            "",
+            "",
+            index_width = index_col_width,
+            path_width = path_col_width,
+            type_width = type_col_width,
             name_width = name_col_width
         );
 
-        for (segment, name) in segments.iter().zip(names.iter()) {
+        for (index, ((segment, entry_type), name)) in segments
+            .iter()
+            .zip(types.iter())
+            .zip(names.iter())
+            .enumerate()
+        {
             println!(
-                "{:<path_width$}  {}",
+                "{:<index_width$}  {:<path_width$}  {:<type_width$}  {}",
+                index + 1,
                 segment,
+                entry_type,
                 name,
-                path_width = path_col_width
+                index_width = index_col_width,
+                path_width = path_col_width,
+                type_width = type_col_width
             );
         }
         return;
@@ -1281,6 +1316,35 @@ fn resolve_segment_name(segment: &str, entries: &[PathEntry]) -> String {
 
     if let Some(extra) = find_extra_path_by_location(&normalized) {
         return extra.name;
+    }
+
+    String::new()
+}
+
+/// Resolve the display type for a PATH segment.
+///
+/// Type labels are `system` and `known`. Non-built-in segments have a blank
+/// type unless they are protected store entries, in which case this returns
+/// `[protected]`.
+fn resolve_segment_type(segment: &str, entries: &[PathEntry]) -> String {
+    let normalized = strip_trailing_slash(segment);
+
+    if let Some(system) = find_system_path_by_location(&normalized) {
+        if system.protect {
+            return "system [protected]".to_string();
+        }
+        return "system".to_string();
+    }
+
+    if find_extra_path_by_location(&normalized).is_some() {
+        return "known".to_string();
+    }
+
+    if entries
+        .iter()
+        .any(|entry| strip_trailing_slash(&entry.location) == normalized && entry.protect)
+    {
+        return "[protected]".to_string();
     }
 
     String::new()
@@ -1625,6 +1689,34 @@ mod tests {
             assert_eq!(resolve_segment_name(&cargo_bin, &entries), "cargo");
             assert_eq!(resolve_segment_name(&pipx_bin, &entries), "pipx");
         }
+    }
+
+    #[test]
+    /// Ensure system and known segments resolve to their expected type labels.
+    fn resolve_segment_type_resolves_system_and_known() {
+        let entries: Vec<PathEntry> = Vec::new();
+        assert_eq!(
+            resolve_segment_type("/usr/bin", &entries),
+            "system [protected]"
+        );
+        assert_eq!(resolve_segment_type("/opt/homebrew/bin", &entries), "known");
+    }
+
+    #[test]
+    /// Ensure protected store entries are marked as protected in pretty type output.
+    fn resolve_segment_type_marks_protected_store_entry() {
+        let entries = vec![PathEntry {
+            location: "/opt/locked".to_string(),
+            name: "locked".to_string(),
+            autoset: true,
+            prepend: false,
+            protect: true,
+            invalid_option: None,
+            line_number: 1,
+        }];
+
+        assert_eq!(resolve_segment_type("/opt/locked", &entries), "[protected]");
+        assert_eq!(resolve_segment_type("/opt/open", &entries), "");
     }
 
     #[test]

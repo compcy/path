@@ -578,14 +578,11 @@ fn list_pretty_prefers_stored_names_for_system_paths_in_store_file() {
     let out = get_stdout(cmd.arg("list").arg("--pretty"));
     assert_pretty_output_has_unique_names(&out);
 
-    let bin_line = out.lines().find(|line| line.starts_with("/bin")).unwrap();
+    let bin_line = out.lines().find(|line| line.contains("/bin")).unwrap();
     let bin_name = bin_line[bin_line.rfind("  ").unwrap()..].trim();
     assert_eq!(bin_name, "custombin");
 
-    let usrbin_line = out
-        .lines()
-        .find(|line| line.starts_with("/usr/bin"))
-        .unwrap();
+    let usrbin_line = out.lines().find(|line| line.contains("/usr/bin")).unwrap();
     let usrbin_name = usrbin_line[usrbin_line.rfind("  ").unwrap()..].trim();
     assert_eq!(usrbin_name, "customusrbin");
 }
@@ -628,14 +625,14 @@ fn list_pretty_prefers_stored_names_for_known_paths_in_store_file() {
 
     let bin_line = out
         .lines()
-        .find(|line| line.starts_with("/opt/homebrew/bin"))
+        .find(|line| line.contains("/opt/homebrew/bin"))
         .unwrap();
     let bin_name = bin_line[bin_line.rfind("  ").unwrap()..].trim();
     assert_eq!(bin_name, "brewbin");
 
     let sbin_line = out
         .lines()
-        .find(|line| line.starts_with("/opt/homebrew/sbin"))
+        .find(|line| line.contains("/opt/homebrew/sbin"))
         .unwrap();
     let sbin_name = sbin_line[sbin_line.rfind("  ").unwrap()..].trim();
     assert_eq!(sbin_name, "brewsbin");
@@ -698,14 +695,14 @@ fn list_pretty_prefers_stored_names_for_home_relative_known_paths() {
 
     let cargo_line = out
         .lines()
-        .find(|line| line.starts_with(cargo_path.to_string_lossy().as_ref()))
+        .find(|line| line.contains(cargo_path.to_string_lossy().as_ref()))
         .unwrap();
     let cargo_name = cargo_line[cargo_line.rfind("  ").unwrap()..].trim();
     assert_eq!(cargo_name, "mycargo");
 
     let pipx_line = out
         .lines()
-        .find(|line| line.starts_with(pipx_path.to_string_lossy().as_ref()))
+        .find(|line| line.contains(pipx_path.to_string_lossy().as_ref()))
         .unwrap();
     let pipx_name = pipx_line[pipx_line.rfind("  ").unwrap()..].trim();
     assert_eq!(pipx_name, "mypipx");
@@ -1659,13 +1656,60 @@ fn list_pretty_shows_header_and_segments() {
     assert_pretty_output_has_unique_names(&out);
 
     // Header row must be present.
+    assert!(out.contains("#"));
     assert!(out.contains("PATH"));
+    assert!(out.contains("TYPE"));
     assert!(out.contains("NAME"));
 
     // Each PATH segment must appear on its own line.
     let lines: Vec<&str> = out.lines().collect();
-    assert!(lines.iter().any(|l| l.starts_with("/usr/bin")));
-    assert!(lines.iter().any(|l| l.starts_with("/bin")));
+    assert!(lines.iter().any(|l| l.contains("/usr/bin")));
+    assert!(lines.iter().any(|l| l.contains("/bin")));
+}
+
+/// `list --pretty` should include an index column and a type column.
+#[test]
+fn list_pretty_includes_index_and_type_columns() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "/usr/bin:/opt/homebrew/bin:/tmp");
+    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+
+    assert!(out.contains("#"));
+    assert!(out.contains("PATH"));
+    assert!(out.contains("TYPE"));
+    assert!(out.contains("NAME"));
+
+    assert!(out
+        .lines()
+        .any(|line| line.contains("1") && line.contains("/usr/bin") && line.contains("system")));
+    assert!(out.lines().any(|line| line.contains("2")
+        && line.contains("/opt/homebrew/bin")
+        && line.contains("known")));
+    assert!(out
+        .lines()
+        .any(|line| line.contains("3") && line.contains("/tmp")));
+}
+
+/// `list --pretty` should show `[protected]` for protected system and store entries.
+#[test]
+fn list_pretty_marks_protected_paths_in_type_column() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join(".path"), "'/opt/locked' [locked] (auto,protect)\n").unwrap();
+
+    let mut cmd = test_cmd(dir, "/bin:/opt/locked");
+    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+
+    let system_line = out.lines().find(|line| line.contains("/bin")).unwrap();
+    assert!(system_line.contains("system [protected]"));
+
+    let stored_line = out
+        .lines()
+        .find(|line| line.contains("/opt/locked"))
+        .unwrap();
+    assert!(stored_line.contains("[protected]"));
 }
 
 /// `list --pretty` should resolve names from the built-in system path list.
@@ -1721,11 +1765,11 @@ fn list_pretty_resolves_stored_entry_names() {
     assert_pretty_output_has_unique_names(&out);
 
     // /tmp should appear with its stored name.
-    let tmp_line = out.lines().find(|l| l.starts_with("/tmp")).unwrap();
+    let tmp_line = out.lines().find(|l| l.contains("/tmp")).unwrap();
     assert!(tmp_line.contains("mytmp"));
 
     // /usr/bin should appear with its built-in system name.
-    let usrbin_line = out.lines().find(|l| l.starts_with("/usr/bin")).unwrap();
+    let usrbin_line = out.lines().find(|l| l.contains("/usr/bin")).unwrap();
     assert!(usrbin_line.contains("usrbin"));
 }
 
@@ -1764,6 +1808,8 @@ fn list_pretty_with_empty_path_prints_only_table_header() {
 
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0], "PATH  NAME");
-    assert_eq!(lines[1], "----  ----");
+    assert!(lines[0].contains("#"));
+    assert!(lines[0].contains("PATH"));
+    assert!(lines[0].contains("TYPE"));
+    assert!(lines[0].contains("NAME"));
 }
