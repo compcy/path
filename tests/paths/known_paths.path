@@ -1,0 +1,3 @@
+# layout: '<location>' [<name>] (<options>)
+'/opt/homebrew/bin' [brewbin] (auto)
+'/opt/homebrew/sbin' [brewsbin] (noauto)

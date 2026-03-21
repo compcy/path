@@ -571,6 +571,33 @@ fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry]) {
         std::process::exit(1);
     }
 
+    let mut seen_locations = std::collections::HashMap::new();
+    for entry in entries {
+        seen_locations
+            .entry(&entry.location)
+            .or_insert_with(Vec::new)
+            .push(entry.line_number);
+    }
+
+    let duplicate_locations: Vec<_> = seen_locations
+        .iter()
+        .filter(|(_, lines)| lines.len() > 1)
+        .collect();
+    if !duplicate_locations.is_empty() {
+        for (location, lines) in duplicate_locations {
+            let line_list = lines
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!(
+                "error: duplicate path '{}' found at lines: {}",
+                location, line_list
+            );
+        }
+        std::process::exit(1);
+    }
+
     let invalid: Vec<&PathEntry> = entries
         .iter()
         .filter(|e| !Path::new(&e.location).exists())

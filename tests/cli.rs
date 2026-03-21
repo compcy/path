@@ -514,6 +514,203 @@ fn duplicate_names_in_file_cause_error() {
     assert!(contents.contains("'/foo/c' [unique] (auto)"));
 }
 
+/// Entries with duplicate stored locations should be rejected after normalization.
+#[test]
+fn duplicate_paths_in_file_cause_error() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "duplicate_paths").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let assert = cmd.arg("list").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("error: duplicate path '/foo/a'"));
+    assert!(stderr.contains("lines: 2, 3"));
+}
+
+/// `verify` should surface duplicate stored locations from the store file.
+#[test]
+fn verify_surfaces_duplicate_paths_from_fixture() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "duplicate_paths").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let assert = cmd.arg("verify").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("error: duplicate path '/foo/a'"));
+    assert!(stderr.contains("lines: 2, 3"));
+}
+
+/// Stored built-in system paths should be accepted and listed normally.
+#[test]
+fn list_accepts_system_paths_in_store_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "system_paths").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let out = get_stdout(cmd.arg("list"));
+    assert!(out.contains("/bin [custombin] (auto)"));
+    assert!(out.contains("/usr/bin [customusrbin] (noauto)"));
+}
+
+/// Stored built-in system paths should pass verification without warnings or errors.
+#[test]
+fn verify_accepts_system_paths_in_store_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "system_paths").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let out = get_stdout(cmd.arg("verify"));
+    assert!(out.contains("Path file is valid."));
+}
+
+/// Stored names should override built-in pretty names for system path locations.
+#[test]
+fn list_pretty_prefers_stored_names_for_system_paths_in_store_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "system_paths").unwrap();
+
+    let mut cmd = test_cmd(dir, "/bin:/usr/bin");
+    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    assert_pretty_output_has_unique_names(&out);
+
+    let bin_line = out.lines().find(|line| line.starts_with("/bin")).unwrap();
+    let bin_name = bin_line[bin_line.rfind("  ").unwrap()..].trim();
+    assert_eq!(bin_name, "custombin");
+
+    let usrbin_line = out
+        .lines()
+        .find(|line| line.starts_with("/usr/bin"))
+        .unwrap();
+    let usrbin_name = usrbin_line[usrbin_line.rfind("  ").unwrap()..].trim();
+    assert_eq!(usrbin_name, "customusrbin");
+}
+
+/// Stored known extra paths should be accepted and listed normally.
+#[test]
+fn list_accepts_known_paths_in_store_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "known_paths").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let out = get_stdout(cmd.arg("list"));
+    assert!(out.contains("/opt/homebrew/bin [brewbin] (auto)"));
+    assert!(out.contains("/opt/homebrew/sbin [brewsbin] (noauto)"));
+}
+
+/// Stored known extra paths should pass verification without warnings or errors.
+#[test]
+fn verify_accepts_known_paths_in_store_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "known_paths").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let out = get_stdout(cmd.arg("verify"));
+    assert!(out.contains("Path file is valid."));
+}
+
+/// Stored names should override built-in pretty names for known extra path locations.
+#[test]
+fn list_pretty_prefers_stored_names_for_known_paths_in_store_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "known_paths").unwrap();
+
+    let mut cmd = test_cmd(dir, "/opt/homebrew/bin:/opt/homebrew/sbin");
+    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    assert_pretty_output_has_unique_names(&out);
+
+    let bin_line = out
+        .lines()
+        .find(|line| line.starts_with("/opt/homebrew/bin"))
+        .unwrap();
+    let bin_name = bin_line[bin_line.rfind("  ").unwrap()..].trim();
+    assert_eq!(bin_name, "brewbin");
+
+    let sbin_line = out
+        .lines()
+        .find(|line| line.starts_with("/opt/homebrew/sbin"))
+        .unwrap();
+    let sbin_name = sbin_line[sbin_line.rfind("  ").unwrap()..].trim();
+    assert_eq!(sbin_name, "brewsbin");
+}
+
+/// HOME-relative known extra paths should also be accepted when stored explicitly.
+#[test]
+fn verify_accepts_home_relative_known_paths_in_store_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let home = dir.join("home");
+    fs::create_dir(&home).unwrap();
+
+    fs::write(
+        dir.join(".path"),
+        format!(
+            "'{}' [mycargo] (auto)\n'{}' [mypipx] (auto)\n",
+            home.join(".cargo/bin").to_string_lossy(),
+            home.join(".local/bin").to_string_lossy()
+        ),
+    )
+    .unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    cmd.env("HOME", &home);
+    let out = get_stdout(cmd.arg("verify"));
+    assert!(out.contains("Path file is valid."));
+}
+
+/// Stored names should override HOME-relative built-in names for known extra paths.
+#[test]
+fn list_pretty_prefers_stored_names_for_home_relative_known_paths() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let home = dir.join("home");
+    fs::create_dir(&home).unwrap();
+
+    let cargo_path = home.join(".cargo/bin");
+    let pipx_path = home.join(".local/bin");
+    fs::write(
+        dir.join(".path"),
+        format!(
+            "'{}' [mycargo] (auto)\n'{}' [mypipx] (auto)\n",
+            cargo_path.to_string_lossy(),
+            pipx_path.to_string_lossy()
+        ),
+    )
+    .unwrap();
+
+    let path_env = format!(
+        "{}:{}",
+        cargo_path.to_string_lossy(),
+        pipx_path.to_string_lossy()
+    );
+
+    let mut cmd = test_cmd(dir, &path_env);
+    cmd.env("HOME", &home);
+    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    assert_pretty_output_has_unique_names(&out);
+
+    let cargo_line = out
+        .lines()
+        .find(|line| line.starts_with(cargo_path.to_string_lossy().as_ref()))
+        .unwrap();
+    let cargo_name = cargo_line[cargo_line.rfind("  ").unwrap()..].trim();
+    assert_eq!(cargo_name, "mycargo");
+
+    let pipx_line = out
+        .lines()
+        .find(|line| line.starts_with(pipx_path.to_string_lossy().as_ref()))
+        .unwrap();
+    let pipx_name = pipx_line[pipx_line.rfind("  ").unwrap()..].trim();
+    assert_eq!(pipx_name, "mypipx");
+}
+
 /// Names with non-alphanumeric characters should be rejected.
 #[test]
 fn invalid_names_are_rejected() {
@@ -954,6 +1151,8 @@ fn stored_location_with_colon_causes_error() {
 /// Delimiter-malicious and asymmetrical store-file cases should be rejected.
 #[test]
 fn list_rejects_delimiter_malicious_cases() {
+    // Keep this list synchronized with tests/paths/README.md (Malicious Fixtures)
+    // and files under tests/paths/malicious/.
     let cases = [
         "malicious/location_parentheses",
         "malicious/location_open_parenthesis",
@@ -1017,6 +1216,108 @@ fn list_rejects_delimiter_malicious_cases() {
             stderr
         );
     }
+}
+
+/// README fixture lists should stay synchronized with the fixture files on disk.
+#[test]
+fn fixture_readme_lists_match_fixture_files() {
+    let readme = fs::read_to_string(Path::new("tests").join("paths").join("README.md")).unwrap();
+
+    let mut documented_top_level = HashSet::new();
+    let mut documented_malicious = HashSet::new();
+    let mut section = "";
+
+    for line in readme.lines() {
+        let trimmed = line.trim();
+
+        if trimmed == "## Fixture Naming Convention" {
+            section = "top";
+            continue;
+        }
+
+        if trimmed == "## Malicious Fixtures" {
+            section = "malicious";
+            continue;
+        }
+
+        if trimmed.starts_with("## ") {
+            section = "";
+            continue;
+        }
+
+        if !trimmed.starts_with("- `") {
+            continue;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("- `") {
+            if let Some((name, _)) = rest.split_once('`') {
+                if name.ends_with(".path") {
+                    match section {
+                        "top" => {
+                            documented_top_level.insert(name.to_string());
+                        }
+                        "malicious" => {
+                            documented_malicious.insert(name.to_string());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    let top_level_dir = Path::new("tests").join("paths");
+    let mut actual_top_level = HashSet::new();
+    for entry in fs::read_dir(&top_level_dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("path") {
+            actual_top_level.insert(path.file_name().unwrap().to_string_lossy().to_string());
+        }
+    }
+
+    let mut actual_malicious = HashSet::new();
+    for entry in fs::read_dir(top_level_dir.join("malicious")).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("path") {
+            actual_malicious.insert(path.file_name().unwrap().to_string_lossy().to_string());
+        }
+    }
+
+    let mut undocumented_top: Vec<String> = actual_top_level
+        .difference(&documented_top_level)
+        .cloned()
+        .collect();
+    let mut stale_top: Vec<String> = documented_top_level
+        .difference(&actual_top_level)
+        .cloned()
+        .collect();
+    undocumented_top.sort();
+    stale_top.sort();
+    assert!(
+        undocumented_top.is_empty() && stale_top.is_empty(),
+        "Fixture Naming Convention in tests/paths/README.md is out of sync. Undocumented files: {:?}; stale docs: {:?}",
+        undocumented_top,
+        stale_top
+    );
+
+    let mut undocumented_malicious: Vec<String> = actual_malicious
+        .difference(&documented_malicious)
+        .cloned()
+        .collect();
+    let mut stale_malicious: Vec<String> = documented_malicious
+        .difference(&actual_malicious)
+        .cloned()
+        .collect();
+    undocumented_malicious.sort();
+    stale_malicious.sort();
+    assert!(
+        undocumented_malicious.is_empty() && stale_malicious.is_empty(),
+        "Malicious Fixtures in tests/paths/README.md are out of sync. Undocumented files: {:?}; stale docs: {:?}",
+        undocumented_malicious,
+        stale_malicious
+    );
 }
 
 /// Adding with `--noauto` should persist `noauto` in the third field.
