@@ -19,6 +19,7 @@ struct PathEntry {
     name: String,
     autoset: bool,
     prepend: bool,
+    protect: bool,
     line_number: usize,
 }
 
@@ -53,7 +54,8 @@ fn resolve_store_file_path(matches: &ArgMatches) -> PathBuf {
 /// `name` is wrapped in `[]` and options are wrapped in `()`.
 ///
 /// `autoset` options are `auto` or `noauto`; placement options are `pre` or
-/// `post`. Missing or blank options default to `auto` plus post.
+/// `post`; protection options include `protect`. Missing or blank options
+/// default to `auto` plus post and no protection.
 fn parse_autoset_value(value: &str) -> Option<bool> {
     match value {
         "auto" => Some(true),
@@ -79,21 +81,23 @@ fn parse_name_field(value: &str) -> Option<String> {
 
 /// Decode entry options from the third field.
 ///
-/// Supported options include autoset (`auto`/`noauto`) and placement
-/// (`pre`/`post`). Options may be comma-delimited and wrapped in `()`.
-/// Unknown options are rejected and make the entry malformed.
-fn parse_entry_options(value: &str) -> Option<(bool, bool)> {
+/// Supported options include autoset (`auto`/`noauto`), placement
+/// (`pre`/`post`), and protection (`protect`). Options may be comma-delimited
+/// and wrapped in `()`. Unknown options are rejected and make the entry
+/// malformed.
+fn parse_entry_options(value: &str) -> Option<(bool, bool, bool)> {
     let normalized = value
         .strip_prefix('(')
         .and_then(|inner| inner.strip_suffix(')'))?
         .trim();
 
     if normalized.is_empty() {
-        return Some((true, false));
+        return Some((true, false, false));
     }
 
     let mut autoset = true;
     let mut prepend = false;
+    let mut protect = false;
 
     for option in normalized
         .split(',')
@@ -108,6 +112,7 @@ fn parse_entry_options(value: &str) -> Option<(bool, bool)> {
         match option {
             "pre" => prepend = true,
             "post" => prepend = false,
+            "protect" => protect = true,
             other => {
                 eprintln!("warning: invalid entry option '{}', rejecting entry", other);
                 return None;
@@ -115,7 +120,23 @@ fn parse_entry_options(value: &str) -> Option<(bool, bool)> {
         }
     }
 
-    Some((autoset, prepend))
+    Some((autoset, prepend, protect))
+}
+
+/// Render the option marker list for a stored entry.
+fn format_entry_options(entry: &PathEntry) -> String {
+    let autoset = if entry.autoset { "auto" } else { "noauto" };
+    let mut options = vec![autoset.to_string()];
+
+    if entry.prepend {
+        options.push("pre".to_string());
+    }
+
+    if entry.protect {
+        options.push("protect".to_string());
+    }
+
+    options.join(",")
 }
 
 /// Split a store line into fields while keeping a quoted location token intact.
@@ -162,6 +183,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                     name,
                     autoset: true,
                     prepend: false,
+                    protect: false,
                     line_number,
                 },
                 (None, _) => {
@@ -174,6 +196,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         name: String::new(),
                         autoset: true,
                         prepend: false,
+                        protect: false,
                         line_number,
                     }
                 }
@@ -187,6 +210,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         name: String::new(),
                         autoset: true,
                         prepend: false,
+                        protect: false,
                         line_number,
                     }
                 }
@@ -197,11 +221,12 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
             let parsed_name = parse_name_field(name);
             let parsed_options = parse_entry_options(options);
             match (parsed_location, parsed_name, parsed_options) {
-                (Some(location), Some(name), Some((autoset, prepend))) => PathEntry {
+                (Some(location), Some(name), Some((autoset, prepend, protect))) => PathEntry {
                     location: strip_trailing_slash(location),
                     name,
                     autoset,
                     prepend,
+                    protect,
                     line_number,
                 },
                 (None, _, _) => {
@@ -214,6 +239,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         name: String::new(),
                         autoset: true,
                         prepend: false,
+                        protect: false,
                         line_number,
                     }
                 }
@@ -227,6 +253,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         name: String::new(),
                         autoset: true,
                         prepend: false,
+                        protect: false,
                         line_number,
                     }
                 }
@@ -240,6 +267,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         name: String::new(),
                         autoset: true,
                         prepend: false,
+                        protect: false,
                         line_number,
                     }
                 }
@@ -255,6 +283,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                 name: String::new(),
                 autoset: true,
                 prepend: false,
+                protect: false,
                 line_number,
             }
         }
@@ -268,6 +297,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                 name: String::new(),
                 autoset: true,
                 prepend: false,
+                protect: false,
                 line_number,
             }
         }
@@ -278,17 +308,11 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
 
 /// Serialize an entry back into a line.
 fn format_entry_line(entry: &PathEntry) -> String {
-    let autoset = if entry.autoset { "auto" } else { "noauto" };
-    let options = if entry.prepend {
-        format!("{},pre", autoset)
-    } else {
-        autoset.to_string()
-    };
     format!(
         "{} [{}] ({})",
         quote_store_location_field(&entry.location),
         entry.name,
-        options
+        format_entry_options(entry)
     )
 }
 
@@ -469,6 +493,12 @@ fn build_cli() -> App<'static, 'static> {
                     Arg::with_name("pre")
                         .long("pre")
                         .help("Prepend the location instead of appending")
+                        .takes_value(false),
+                )
+                .arg(
+                    Arg::with_name("protect")
+                        .long("protect")
+                        .help("Store this named entry as protected from 'path remove'")
                         .takes_value(false),
                 ),
         )
@@ -705,14 +735,12 @@ fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -
 
 /// Format a stored entry for human-readable list output.
 fn format_list_entry(entry: &PathEntry) -> String {
-    let autoset_marker = if entry.autoset { "auto" } else { "noauto" };
-    let options = if entry.prepend {
-        format!("{},pre", autoset_marker)
-    } else {
-        autoset_marker.to_string()
-    };
-
-    format!("{} [{}] ({})", entry.location, entry.name, options)
+    format!(
+        "{} [{}] ({})",
+        entry.location,
+        entry.name,
+        format_entry_options(entry)
+    )
 }
 
 /// Handle the `add` subcommand.
@@ -775,6 +803,7 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
 
     let name_opt = add_matches.value_of("name").map(|value| value.to_string());
     let autoset = !add_matches.is_present("noauto");
+    let protect = add_matches.is_present("protect");
 
     if let Some(name) = name_opt {
         if !is_valid_name(&name) {
@@ -805,6 +834,7 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
                     name,
                     autoset,
                     prepend,
+                    protect,
                     line_number: 0,
                 });
 
@@ -841,10 +871,19 @@ fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
     let argument = remove_matches.value_of("location").unwrap().to_string();
     let mut location_to_remove = argument.clone();
     let mut resolved_by_name = false;
+    let loaded_entries = load_entries(store_file).ok();
 
-    if let Ok(entries) = load_entries(store_file) {
-        if let Some(resolved_location) = resolve_location_by_name(&argument, &entries) {
-            location_to_remove = resolved_location;
+    if let Some(entries) = loaded_entries.as_ref() {
+        if let Some(entry) = entries.iter().find(|entry| entry.name == argument) {
+            if entry.protect {
+                eprintln!(
+                    "error: entry '{}' is protected and cannot be removed with 'path remove'",
+                    argument
+                );
+                std::process::exit(1);
+            }
+
+            location_to_remove = entry.location.clone();
             resolved_by_name = true;
         }
     }
@@ -871,6 +910,19 @@ fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
 
         location_to_remove = canonicalize_relative_cli_argument(&argument);
         raw_path_arg = Some(argument.as_str());
+
+        if let Some(entries) = loaded_entries.as_ref() {
+            if let Some(entry) = entries
+                .iter()
+                .find(|entry| entry.protect && entry.location == location_to_remove)
+            {
+                eprintln!(
+                    "error: entry '{}' is protected and cannot be removed with 'path remove'",
+                    entry.name
+                );
+                std::process::exit(1);
+            }
+        }
     }
 
     let current = env::var("PATH").unwrap_or_default();
@@ -1085,6 +1137,7 @@ mod tests {
         assert_eq!(entry.name, "tools");
         assert!(!entry.autoset);
         assert!(!entry.prepend);
+        assert!(!entry.protect);
         assert_eq!(entry.line_number, 7);
     }
 
@@ -1096,6 +1149,7 @@ mod tests {
         assert_eq!(entry.name, "");
         assert!(entry.autoset);
         assert!(!entry.prepend);
+        assert!(!entry.protect);
     }
 
     #[test]
@@ -1106,6 +1160,7 @@ mod tests {
         assert_eq!(entry.name, "");
         assert!(entry.autoset);
         assert!(!entry.prepend);
+        assert!(!entry.protect);
     }
 
     #[test]
@@ -1227,6 +1282,7 @@ mod tests {
             name: "tools".to_string(),
             autoset: true,
             prepend: false,
+            protect: false,
             line_number: 1,
         }];
         assert_eq!(
@@ -1244,6 +1300,7 @@ mod tests {
             name: "tools".to_string(),
             autoset: true,
             prepend: false,
+            protect: false,
             line_number: 0,
         };
         assert_eq!(format_list_entry(&entry), "/usr/local/bin [tools] (auto)");
@@ -1253,6 +1310,7 @@ mod tests {
             name: "/usr/bin".to_string(),
             autoset: false,
             prepend: false,
+            protect: false,
             line_number: 0,
         };
         assert_eq!(format_list_entry(&same), "/usr/bin [/usr/bin] (noauto)");
@@ -1262,9 +1320,23 @@ mod tests {
             name: "pre".to_string(),
             autoset: true,
             prepend: true,
+            protect: false,
             line_number: 0,
         };
         assert_eq!(format_list_entry(&pre), "/opt/pre [pre] (auto,pre)");
+
+        let protect = PathEntry {
+            location: "/opt/protect".to_string(),
+            name: "protect".to_string(),
+            autoset: true,
+            prepend: false,
+            protect: true,
+            line_number: 0,
+        };
+        assert_eq!(
+            format_list_entry(&protect),
+            "/opt/protect [protect] (auto,protect)"
+        );
     }
 
     #[test]
@@ -1281,6 +1353,7 @@ mod tests {
         let entry = parse_entry_line("'/tmp/tools' [tools] (pre)", 2).unwrap();
         assert!(entry.autoset);
         assert!(entry.prepend);
+        assert!(!entry.protect);
     }
 
     #[test]
@@ -1289,6 +1362,16 @@ mod tests {
         let entry = parse_entry_line("'/tmp/tools' [tools] (noauto,pre)", 2).unwrap();
         assert!(!entry.autoset);
         assert!(entry.prepend);
+        assert!(!entry.protect);
+    }
+
+    #[test]
+    /// Ensure `protect` is parsed as a supported option.
+    fn parse_entry_line_protect_option_enables_protection() {
+        let entry = parse_entry_line("'/tmp/tools' [tools] (auto,protect)", 2).unwrap();
+        assert!(entry.autoset);
+        assert!(!entry.prepend);
+        assert!(entry.protect);
     }
 
     #[test]
@@ -1340,6 +1423,7 @@ mod tests {
         assert_eq!(entry.name, "tools");
         assert!(entry.autoset);
         assert!(!entry.prepend);
+        assert!(!entry.protect);
     }
 
     #[test]
@@ -1373,6 +1457,7 @@ mod tests {
             name: "a".to_string(),
             autoset: true,
             prepend: false,
+            protect: false,
             line_number: 0,
         };
         assert_eq!(format_entry_line(&auto), "'/tmp/a' [a] (auto)");
@@ -1382,6 +1467,7 @@ mod tests {
             name: "b".to_string(),
             autoset: false,
             prepend: false,
+            protect: false,
             line_number: 0,
         };
         assert_eq!(format_entry_line(&noauto), "'/tmp/b' [b] (noauto)");
@@ -1391,9 +1477,20 @@ mod tests {
             name: "c".to_string(),
             autoset: true,
             prepend: true,
+            protect: false,
             line_number: 0,
         };
         assert_eq!(format_entry_line(&pre), "'/tmp/c' [c] (auto,pre)");
+
+        let protect = PathEntry {
+            location: "/tmp/d".to_string(),
+            name: "d".to_string(),
+            autoset: true,
+            prepend: false,
+            protect: true,
+            line_number: 0,
+        };
+        assert_eq!(format_entry_line(&protect), "'/tmp/d' [d] (auto,protect)");
     }
 
     #[test]
@@ -1404,6 +1501,7 @@ mod tests {
             name: "tools".to_string(),
             autoset: true,
             prepend: false,
+            protect: false,
             line_number: 0,
         };
         assert_eq!(format_entry_line(&spaced), "'/tmp/my tools' [tools] (auto)");
@@ -1413,6 +1511,7 @@ mod tests {
             name: "tools".to_string(),
             autoset: true,
             prepend: false,
+            protect: false,
             line_number: 0,
         };
         assert_eq!(

@@ -3,7 +3,7 @@
 `path` is a simple command-line utility for inspecting and manipulating the
 `PATH` environment variable. It also keeps a local record of added entries in
 a plain-text store file (default: `$HOME/.path`), with optional names and
-autoset flags.
+autoset and protection flags.
 
 Because a child process cannot directly modify its parent shell environment,
 commands that compute PATH output a shell assignment like
@@ -84,12 +84,14 @@ Global option:
   - If the path exists, it must be a directory (files are rejected).
   - If `name` is provided, it must be alphanumeric and unique.
   - Use `--noauto` to store a named entry that should not be included by `path load`.
+  - Use `--protect` to store a named entry that `path remove` must not remove by name or by direct path.
   - Only entries with an explicit `name` are written to the configured store file.
   - Existing PATH entries are not duplicated for equivalent trailing-slash forms (for example `/usr/local/bin` and `/usr/local/bin/`).
 - `path add --pre <location-or-name> [name]` — prepend instead of append
   - When `name` is provided, the stored entry records `pre` in its options so `path load` will prepend it in future shells.
 - `path remove <location-or-name>` — remove from PATH only
   - If the argument matches a stored short name, its location is removed from PATH.
+  - Stored entries marked `protect` fail instead of being removed, whether addressed by stored name or direct path.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`).
   - This command does not modify `.path`.
 - `path delete <location-or-name>` — delete from the configured store file only
@@ -120,6 +122,7 @@ path add /usr/local/bin             # append only; not stored (no explicit name)
 path add /home/$USER/.bin home      # store with short name "home"
 path add "./my tools" mytools       # path contains a space
 path add /opt/internal/bin internal --noauto  # store but do not include in `path load`
+path add /opt/locked/bin locked --protect      # store and prevent `path remove locked`
 path add --pre /opt/custom/bin      # prepend to PATH instead of append
 path add home                        # uses stored name "home" if present
 path remove /home/$USER/.bin         # remove by path
@@ -138,7 +141,7 @@ path add .path
 Entries are persisted to `$HOME/.path` by default (or the file passed with
 `--file`), but only for entries where you supplied an explicit name. New lines are written as
 `'location' [name] (options)` with fields separated by whitespace, where options
-can include `auto` or `noauto`, and optional placement `pre`.
+can include `auto` or `noauto`, optional placement `pre`, and optional protection `protect`.
 If `pre` is not specified, `post` (append) behavior is assumed.
 Older unwrapped forms such as `location name auto` are treated as malformed.
 If the third field is missing, it is treated as `auto`. (The name field is
@@ -153,6 +156,7 @@ are escaped as `\\'` and `\\\\`. For example:
 ```text
 '/opt/my tools' [tools] (auto)
 '/opt/my tools' [tools] (auto,pre)
+'/opt/locked tools' [locked] (auto,protect)
 ```
 
 You can also install a release build and invoke it directly:

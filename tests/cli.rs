@@ -664,6 +664,48 @@ fn remove_keeps_store_entries() {
     assert!(contents.contains("'/tmp' [home] (auto)"));
 }
 
+/// `remove` should reject stored entries marked `protect`.
+#[test]
+fn remove_rejects_protected_store_entry() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "'/tmp' [home] (auto,protect)\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "/tmp:/usr/bin");
+    let assert = cmd.arg("remove").arg("home").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("protected"));
+
+    let contents = fs::read_to_string(store).unwrap();
+    assert!(contents.contains("'/tmp' [home] (auto,protect)"));
+}
+
+/// `remove` should reject direct path removal for stored entries marked `protect`.
+#[test]
+fn remove_rejects_protected_store_path_argument() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    fs::write(&store, "'/tmp' [home] (auto,protect)\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "/tmp:/usr/bin");
+    let assert = cmd.arg("remove").arg("/tmp").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("protected"));
+
+    let contents = fs::read_to_string(store).unwrap();
+    assert!(contents.contains("'/tmp' [home] (auto,protect)"));
+}
+
 /// `delete` should remove the matching entry from `.path` by name.
 #[test]
 fn delete_removes_store_entry_by_name() {
@@ -1256,6 +1298,28 @@ fn add_with_noauto_stores_noauto_marker() {
     let store = dir.join(".path");
     let contents = fs::read_to_string(store).unwrap();
     assert!(contents.contains("'/tmp/noauto' [noautoentry] (noauto)"));
+}
+
+/// Adding with `--protect` should persist `protect` in the third field.
+#[test]
+fn add_with_protect_stores_protect_marker() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(dir)
+        .arg("--file")
+        .arg(dir.join(".path"))
+        .env("PATH", "");
+    cmd.arg("add")
+        .arg("--protect")
+        .arg("/tmp/protect")
+        .arg("protectentry");
+    cmd.assert().success();
+
+    let store = dir.join(".path");
+    let contents = fs::read_to_string(store).unwrap();
+    assert!(contents.contains("'/tmp/protect' [protectentry] (auto,protect)"));
 }
 
 /// `list` should read quoted locations containing literal spaces.
