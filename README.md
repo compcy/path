@@ -224,6 +224,12 @@ To run wrapper security regression tests locally:
 sh tests/path-wrapper-security.sh
 ```
 
+To run comprehensive path-wrapper utility function tests:
+
+```sh
+sh tests/path-wrapper-functions.sh
+```
+
 ## License
 
 This project is licensed under the MIT License. See `LICENSE`.
