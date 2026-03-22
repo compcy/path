@@ -1486,6 +1486,20 @@ fn remove_rejects_builtin_system_path() {
     assert!(stderr.contains("system path '/bin' (sysbin) is protected"));
 }
 
+/// `remove` should also reject built-in protected system paths when resolved
+/// through a stored non-reserved name that points at the protected location.
+#[test]
+fn remove_rejects_builtin_system_path_via_store_alias() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "system_paths").unwrap();
+
+    let mut cmd = test_cmd(dir, "/bin:/usr/bin");
+    let assert = cmd.arg("remove").arg("custombin").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("system path '/bin' (sysbin) is protected"));
+}
+
 /// `remove --force` and `remove -f` should allow removing built-in protected system paths by reserved name or path.
 #[test]
 fn remove_force_allows_builtin_system_path() {

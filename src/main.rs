@@ -1136,6 +1136,17 @@ fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
             }
 
             location_to_remove = entry.location.clone();
+
+            if let Some(system_entry) =
+                find_system_path_by_location(&location_to_remove).filter(|_| !force_remove)
+            {
+                eprintln!(
+                    "error: system path '{}' ({}) is protected and cannot be removed with 'path remove'",
+                    system_entry.location, system_entry.name
+                );
+                std::process::exit(1);
+            }
+
             resolved_by_name = true;
         }
     }
