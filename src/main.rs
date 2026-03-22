@@ -290,30 +290,42 @@ fn parse_name_field(value: &str) -> Option<String> {
     strip_wrapped(value, '[', ']').map(|name| name.to_string())
 }
 
+/// Represent parsed options with their associated diagnostic information.
+struct ParsedOptions {
+    auto_mode: AutosetMode,
+    placement_mode: PlacementMode,
+    protection_mode: ProtectionMode,
+    diagnostic: Option<EntryDiagnosticKind>,
+}
+
 /// Decode entry options from the third field.
 ///
 /// Result for decoding a store entry options field.
 enum EntryOptionsParseResult {
-    Parsed {
-        auto_mode: AutosetMode,
-        placement_mode: PlacementMode,
-        protection_mode: ProtectionMode,
-        diagnostic: Option<EntryDiagnosticKind>,
-    },
+    Parsed(ParsedOptions),
     Malformed,
 }
 
 const MUTUALLY_EXCLUSIVE_OPTION_PAIRS: [(&str, &str); 2] = [("auto", "noauto"), ("pre", "post")];
 
-// Build a Parsed result seeded with default option modes and an optional diagnostic.
+/// Build a Parsed result seeded with default option modes and an optional diagnostic.
 fn default_parsed_options_result(
     diagnostic: Option<EntryDiagnosticKind>,
 ) -> EntryOptionsParseResult {
-    EntryOptionsParseResult::Parsed {
+    EntryOptionsParseResult::Parsed(ParsedOptions {
         auto_mode: AutosetMode::Auto,
         placement_mode: PlacementMode::Postfix,
         protection_mode: ProtectionMode::Unprotected,
         diagnostic,
+    })
+}
+
+/// Construct an entry diagnostic from a parsed diagnostic kind and source metadata.
+fn entry_diagnostic(line_number: usize, line: &str, kind: EntryDiagnosticKind) -> EntryDiagnostic {
+    EntryDiagnostic {
+        line_number,
+        line: line.to_string(),
+        kind,
     }
 }
 
@@ -374,12 +386,12 @@ fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
         }
     }
 
-    EntryOptionsParseResult::Parsed {
+    EntryOptionsParseResult::Parsed(ParsedOptions {
         auto_mode,
         placement_mode,
         protection_mode,
         diagnostic: unknown_option.map(|option| EntryDiagnosticKind::UnknownOption { option }),
-    }
+    })
 }
 
 /// Render the option marker list for a stored entry.
@@ -469,25 +481,18 @@ fn parse_entry_line_with_diagnostic(
             let parsed_options = parse_entry_options(options);
 
             match (parsed_location, parsed_name, parsed_options) {
-                (
-                    Some(location),
-                    Some(name),
-                    EntryOptionsParseResult::Parsed {
-                        auto_mode,
-                        placement_mode,
-                        protection_mode,
-                        diagnostic,
-                    },
-                ) => {
+                (Some(location), Some(name), EntryOptionsParseResult::Parsed(options)) => {
                     let entry = PathEntry::new(strip_trailing_slash(location), name)
-                        .with_options(auto_mode, placement_mode, protection_mode)
+                        .with_options(
+                            options.auto_mode,
+                            options.placement_mode,
+                            options.protection_mode,
+                        )
                         .with_line_number(line_number);
 
-                    let diagnostic = diagnostic.map(|kind| EntryDiagnostic {
-                        line_number,
-                        line: line.to_string(),
-                        kind,
-                    });
+                    let diagnostic = options
+                        .diagnostic
+                        .map(|kind| entry_diagnostic(line_number, line, kind));
 
                     (entry, diagnostic)
                 }
@@ -1714,16 +1719,11 @@ mod tests {
         let parsed = default_parsed_options_result(None);
 
         match parsed {
-            EntryOptionsParseResult::Parsed {
-                auto_mode,
-                placement_mode,
-                protection_mode,
-                diagnostic,
-            } => {
-                assert_eq!(auto_mode, AutosetMode::Auto);
-                assert_eq!(placement_mode, PlacementMode::Postfix);
-                assert_eq!(protection_mode, ProtectionMode::Unprotected);
-                assert!(diagnostic.is_none());
+            EntryOptionsParseResult::Parsed(options) => {
+                assert_eq!(options.auto_mode, AutosetMode::Auto);
+                assert_eq!(options.placement_mode, PlacementMode::Postfix);
+                assert_eq!(options.protection_mode, ProtectionMode::Unprotected);
+                assert!(options.diagnostic.is_none());
             }
             EntryOptionsParseResult::Malformed => {
                 panic!("expected parsed default option result");
@@ -1740,17 +1740,12 @@ mod tests {
         }));
 
         match parsed {
-            EntryOptionsParseResult::Parsed {
-                auto_mode,
-                placement_mode,
-                protection_mode,
-                diagnostic,
-            } => {
-                assert_eq!(auto_mode, AutosetMode::Auto);
-                assert_eq!(placement_mode, PlacementMode::Postfix);
-                assert_eq!(protection_mode, ProtectionMode::Unprotected);
+            EntryOptionsParseResult::Parsed(options) => {
+                assert_eq!(options.auto_mode, AutosetMode::Auto);
+                assert_eq!(options.placement_mode, PlacementMode::Postfix);
+                assert_eq!(options.protection_mode, ProtectionMode::Unprotected);
                 assert_eq!(
-                    diagnostic,
+                    options.diagnostic,
                     Some(EntryDiagnosticKind::ConflictingOptions {
                         left: "auto".to_string(),
                         right: "noauto".to_string(),
@@ -2283,5 +2278,70 @@ mod tests {
             format_entry_line(&backslash),
             "'/tmp/my\\tools' [tools] (auto)"
         );
+    }
+
+    #[test]
+    /// Ensure ParsedOptions can be constructed directly.
+    fn parsed_options_can_be_constructed() {
+        let options = ParsedOptions {
+            auto_mode: AutosetMode::NoAuto,
+            placement_mode: PlacementMode::Prefix,
+            protection_mode: ProtectionMode::Protected,
+            diagnostic: Some(EntryDiagnosticKind::UnknownOption {
+                option: "badopt".to_string(),
+            }),
+        };
+
+        assert_eq!(options.auto_mode, AutosetMode::NoAuto);
+        assert_eq!(options.placement_mode, PlacementMode::Prefix);
+        assert_eq!(options.protection_mode, ProtectionMode::Protected);
+        assert!(options.diagnostic.is_some());
+    }
+
+    #[test]
+    /// Ensure ParsedOptions can be extracted from Parsed variant.
+    fn parsed_options_extracted_from_variant() {
+        let parsed = default_parsed_options_result(Some(EntryDiagnosticKind::UnknownOption {
+            option: "unknown".to_string(),
+        }));
+
+        match parsed {
+            EntryOptionsParseResult::Parsed(options) => {
+                assert_eq!(options.auto_mode, AutosetMode::Auto);
+                assert_eq!(options.placement_mode, PlacementMode::Postfix);
+                assert_eq!(options.protection_mode, ProtectionMode::Unprotected);
+                assert!(options.diagnostic.is_some());
+            }
+            EntryOptionsParseResult::Malformed => {
+                panic!("expected parsed options result");
+            }
+        }
+    }
+
+    #[test]
+    /// Ensure entry_diagnostic helper wraps diagnostic kind with line metadata.
+    fn entry_diagnostic_wraps_kind_with_metadata() {
+        let kind = EntryDiagnosticKind::UnknownOption {
+            option: "badopt".to_string(),
+        };
+        let diagnostic = entry_diagnostic(5, "'/tmp/test' [test]", kind.clone());
+
+        assert_eq!(diagnostic.line_number, 5);
+        assert_eq!(diagnostic.line, "'/tmp/test' [test]");
+        assert_eq!(diagnostic.kind, kind);
+    }
+
+    #[test]
+    /// Ensure entry_diagnostic helper works with conflicting options diagnostic.
+    fn entry_diagnostic_wraps_conflicting_options() {
+        let kind = EntryDiagnosticKind::ConflictingOptions {
+            left: "auto".to_string(),
+            right: "noauto".to_string(),
+        };
+        let diagnostic = entry_diagnostic(10, "'/tmp/conflict' [c] (auto,noauto)", kind.clone());
+
+        assert_eq!(diagnostic.line_number, 10);
+        assert_eq!(diagnostic.line, "'/tmp/conflict' [c] (auto,noauto)");
+        assert_eq!(diagnostic.kind, kind);
     }
 }
