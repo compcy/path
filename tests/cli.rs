@@ -1643,6 +1643,26 @@ fn load_treats_blank_third_field_as_auto() {
     assert!(out_str.contains("/opt/manual"));
 }
 
+/// `load` should warn about unknown options but still honor recognized ones.
+#[test]
+fn load_warns_for_unknown_or_misspelled_option_but_succeeds() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+    let line = "'/opt/manual' [manual] (pre,postfix)";
+    fs::write(&store, format!("{}\n", line)).unwrap();
+
+    let mut cmd = test_cmd(dir, "/usr/bin");
+    let assert = cmd.arg("load").assert().success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+
+    assert_eq!(stdout.trim(), "export PATH='/opt/manual:/usr/bin'");
+    assert!(stderr.contains("warning: unknown entry option 'postfix'"));
+    assert!(stderr.contains("line 1"));
+    assert!(stderr.contains(line));
+}
+
 /// `verify` should report success when validation passes.
 #[test]
 fn verify_reports_success_when_entries_are_valid() {
@@ -1687,7 +1707,8 @@ fn verify_fails_for_unknown_or_misspelled_option() {
 
     for option in ["autoo", "protec"] {
         let store = dir.join(".path");
-        fs::write(&store, format!("'/tmp/safe' [safe] ({})\n", option)).unwrap();
+        let line = format!("'/tmp/safe' [safe] ({})", option);
+        fs::write(&store, format!("{}\n", line)).unwrap();
 
         let mut cmd = cargo::cargo_bin_cmd!("path");
         cmd.current_dir(dir)
@@ -1696,20 +1717,13 @@ fn verify_fails_for_unknown_or_misspelled_option() {
             .env("PATH", "");
         let assert = cmd.arg("verify").assert().failure();
         let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
-        assert!(
-            stderr.contains("warning: unknown entry option"),
-            "stderr should include unknown-option warning: {}",
-            stderr
-        );
+        assert!(stderr.contains("error: unknown entry option"));
+        assert!(stderr.contains("line 1"));
+        assert!(stderr.contains(&line));
         assert!(
             stderr.contains(option),
             "stderr should include invalid option '{}': {}",
             option,
-            stderr
-        );
-        assert!(
-            stderr.contains("error: store file has no entries"),
-            "stderr should include empty-store verification error: {}",
             stderr
         );
     }

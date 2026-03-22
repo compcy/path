@@ -122,9 +122,11 @@ Global option:
 - `path load` — apply all stored entries marked `auto` to PATH
   - Entries with option `pre` are prepended.
   - Entries without `pre` are appended (post behavior by default).
+  - Unknown alphabetic option tokens produce a warning that includes the line number, the original line, and the unknown option; recognized options on that same line still take effect.
   - This runs automatically when `path-wrapper.sh` is sourced (for example at shell startup from your rc file).
 - `path verify` — validate configured store entries and print `Path file is valid.` when validation passes
   - If the configured store file does not exist or has no entries, it fails.
+  - Unknown alphabetic option tokens are reported with the line number, the original line, and the unknown option, and `path verify` exits non-zero.
   - On validation failure, it prints the failure details and exits non-zero.
 - `path restore` — restore a built-in set of protected system paths into PATH without persisting them
   - Restores: `/bin` (`sysbin`), `/sbin` (`syssbin`), `/usr/bin` (`usrbin`), `/usr/sbin` (`usrsbin`), `/usr/local/bin` (`usrlocalbin`), `/usr/local/sbin` (`usrlocalsbin`).
@@ -137,6 +139,8 @@ Global option:
 - a stored location containing `:`,
 - a non-alphanumeric name,
 - duplicate names.
+
+Unknown alphabetic option tokens are warnings during normal store loading, but they are fatal under `path verify`.
 
 Missing filesystem locations only produce warnings (they are not auto-removed).
 
