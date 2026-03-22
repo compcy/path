@@ -39,6 +39,7 @@ struct PathEntry {
     placement_mode: PlacementMode,
     protection_mode: ProtectionMode,
     invalid_option: Option<String>,
+    conflicting_options: Option<(String, String)>,
     original_options: Option<String>,
     line_number: usize,
 }
@@ -53,6 +54,7 @@ impl PathEntry {
             placement_mode: PlacementMode::Postfix,
             protection_mode: ProtectionMode::Unprotected,
             invalid_option: None,
+            conflicting_options: None,
             original_options: None,
             line_number: 0,
         }
@@ -316,6 +318,10 @@ enum EntryOptionsParseResult {
         protection_mode: ProtectionMode,
         invalid_option: Option<String>,
     },
+    Conflicting {
+        left: String,
+        right: String,
+    },
     Malformed,
 }
 
@@ -339,16 +345,32 @@ fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
         };
     }
 
+    let options: Vec<&str> = normalized
+        .split(',')
+        .map(str::trim)
+        .filter(|opt| !opt.is_empty())
+        .collect();
+
+    if options.contains(&"auto") && options.contains(&"noauto") {
+        return EntryOptionsParseResult::Conflicting {
+            left: "auto".to_string(),
+            right: "noauto".to_string(),
+        };
+    }
+
+    if options.contains(&"pre") && options.contains(&"post") {
+        return EntryOptionsParseResult::Conflicting {
+            left: "pre".to_string(),
+            right: "post".to_string(),
+        };
+    }
+
     let mut auto_mode = AutosetMode::Auto;
     let mut placement_mode = PlacementMode::Postfix;
     let mut protection_mode = ProtectionMode::Unprotected;
     let mut invalid_option = None;
 
-    for option in normalized
-        .split(',')
-        .map(str::trim)
-        .filter(|opt| !opt.is_empty())
-    {
+    for option in options {
         if let Some(parsed_auto_mode) = parse_autoset_value(option) {
             auto_mode = parsed_auto_mode;
             continue;
@@ -483,6 +505,17 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                     }
                     entry
                 }
+                (
+                    Some(location),
+                    Some(name),
+                    EntryOptionsParseResult::Conflicting { left, right },
+                ) => {
+                    let mut entry = PathEntry::new(strip_trailing_slash(location), name)
+                        .with_line_number(line_number)
+                        .with_original_options(options.as_str());
+                    entry.conflicting_options = Some((left, right));
+                    entry
+                }
                 (None, _, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
@@ -527,7 +560,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
 
 /// Serialize an entry back into a line.
 fn format_entry_line(entry: &PathEntry) -> String {
-    if entry.invalid_option.is_some() {
+    if entry.invalid_option.is_some() || entry.conflicting_options.is_some() {
         if let Some(options_token) = entry.original_options.as_deref() {
             return format!(
                 "{} [{}] {}",
@@ -616,11 +649,38 @@ fn report_invalid_option(level: &str, store_file: &Path, entry: &PathEntry) {
     eprintln!("{}: {}", level, format_entry_line(entry));
 }
 
+fn report_conflicting_options(store_file: &Path, entry: &PathEntry) {
+    let (left, right) = entry
+        .conflicting_options
+        .as_ref()
+        .map(|(left, right)| (left.as_str(), right.as_str()))
+        .unwrap_or(("<unknown>", "<unknown>"));
+    eprintln!(
+        "error: conflicting entry options '{}' and '{}' at line {} in {}",
+        left,
+        right,
+        entry.line_number,
+        store_file.display()
+    );
+    eprintln!("error: {}", format_entry_line(entry));
+}
+
 /// Check the existing entries, reporting any whose `location` does not
 /// currently exist. Nameless/duplicate names are fatal errors; missing
 /// locations are warnings only. Unknown option handling is controlled by the
 /// caller.
 fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry], fail_on_invalid_option: bool) {
+    let conflicting_entries: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.conflicting_options.is_some())
+        .collect();
+    if !conflicting_entries.is_empty() {
+        for entry in conflicting_entries {
+            report_conflicting_options(store_file, entry);
+        }
+        std::process::exit(1);
+    }
+
     let mut invalid_entries = entries
         .iter()
         .filter(|entry| entry.invalid_option.is_some())
@@ -1613,6 +1673,7 @@ mod tests {
         assert_eq!(entry.placement_mode, PlacementMode::Postfix);
         assert_eq!(entry.protection_mode, ProtectionMode::Unprotected);
         assert!(entry.invalid_option.is_none());
+        assert!(entry.conflicting_options.is_none());
         assert!(entry.original_options.is_none());
         assert_eq!(entry.line_number, 0);
     }
@@ -1632,6 +1693,7 @@ mod tests {
         assert!(entry.prepends_path());
         assert!(entry.is_protected());
         assert!(entry.invalid_option.is_none());
+        assert!(entry.conflicting_options.is_none());
         assert!(entry.original_options.is_none());
         assert_eq!(entry.line_number, 0);
     }
@@ -1962,6 +2024,7 @@ mod tests {
             placement_mode: PlacementMode::Postfix,
             protection_mode: ProtectionMode::Protected,
             invalid_option: None,
+            conflicting_options: None,
             original_options: None,
             line_number: 1,
         }];

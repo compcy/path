@@ -36,6 +36,8 @@
 
 - For bug fixes, first reproduce the defect with a focused unit test (or integration test when behavior is CLI-only) before changing implementation code.
 - Record and verify the failing Red state by running the relevant test command and confirming the new test fails for the expected reason.
+- For defects involving `.path` parsing or validation behavior, add or update dedicated fixture files in `tests/paths/*.path` and prefer `copy_fixture_to_temp_store` in integration tests instead of inline `fs::write` fixture content.
+- When fixture files are added, removed, or renamed, update `tests/paths/README.md` in the same change.
 - Implement the smallest possible fix that addresses the observed failure; avoid broad refactors unless required for correctness.
 - Re-run the focused tests first, then run `cargo test --all`, and finally run `cargo clippy --all-targets -- -D warnings`.
 - In status updates and final summaries, report defect fixes in explicit Red then Green order so the workflow is auditable.

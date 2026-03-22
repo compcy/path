@@ -1761,6 +1761,60 @@ fn verify_fails_for_unknown_or_misspelled_option() {
     }
 }
 
+/// `verify` should fail when an entry contains mutually exclusive options.
+#[test]
+fn verify_fails_for_conflicting_mutually_exclusive_options() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    for (fixture, left, right) in [
+        ("conflicting_auto_noauto", "auto", "noauto"),
+        ("conflicting_pre_post", "pre", "post"),
+    ] {
+        copy_fixture_to_temp_store(dir, fixture).unwrap();
+        let line = fs::read_to_string(fixture_path(fixture)).unwrap();
+
+        let mut cmd = cargo::cargo_bin_cmd!("path");
+        cmd.current_dir(dir)
+            .arg("--file")
+            .arg(dir.join(".path"))
+            .env("PATH", "");
+        let assert = cmd.arg("verify").assert().failure();
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+        assert!(stderr.contains("error: conflicting entry options"));
+        assert!(stderr.contains(left));
+        assert!(stderr.contains(right));
+        assert!(stderr.contains(line.trim_end()));
+    }
+}
+
+/// `load` should fail when an entry contains mutually exclusive options.
+#[test]
+fn load_fails_for_conflicting_mutually_exclusive_options() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    for (fixture, left, right) in [
+        ("conflicting_auto_noauto", "auto", "noauto"),
+        ("conflicting_pre_post", "pre", "post"),
+    ] {
+        copy_fixture_to_temp_store(dir, fixture).unwrap();
+        let line = fs::read_to_string(fixture_path(fixture)).unwrap();
+
+        let mut cmd = cargo::cargo_bin_cmd!("path");
+        cmd.current_dir(dir)
+            .arg("--file")
+            .arg(dir.join(".path"))
+            .env("PATH", "");
+        let assert = cmd.arg("load").assert().failure();
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+        assert!(stderr.contains("error: conflicting entry options"));
+        assert!(stderr.contains(left));
+        assert!(stderr.contains(right));
+        assert!(stderr.contains(line.trim_end()));
+    }
+}
+
 /// `verify` should fail when the configured store file does not exist.
 #[test]
 fn verify_fails_when_store_file_is_missing() {

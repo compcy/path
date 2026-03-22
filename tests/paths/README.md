@@ -23,6 +23,8 @@ This directory contains pre-made `.path` store files for integration tests.
 - `one_invalid_one_valid.path` - Mix of valid and invalid locations (warning case)
 - `mixed_valid_and_invalid_options.path` - Mix of fully-valid entries and entries with an unknown option token in one file (warning/error case)
 - `multiple_unknown_options.path` - Two entries each with an unknown option token (warning/error case)
+- `conflicting_auto_noauto.path` - Entry with mutually exclusive autoset options (`auto,noauto`) (error case)
+- `conflicting_pre_post.path` - Entry with mutually exclusive placement options (`pre,post`) (error case)
 - `reserved_system_name.path` - Entry using a reserved built-in system name (`sysbin`) to verify name-reservation validation
 - `system_paths.path` - Built-in system paths stored explicitly (allowed case)
 - `known_paths.path` - Known non-system built-in paths stored explicitly (allowed case)
