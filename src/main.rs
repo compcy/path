@@ -212,8 +212,9 @@ enum EntryOptionsParseResult {
 
 /// Supported options include autoset (`auto`/`noauto`), placement
 /// (`pre`/`post`), and protection (`protect`). Options may be comma-delimited
-/// and wrapped in `()`. Unknown alphabetic option tokens are captured for
-/// validation; malformed option shapes are rejected.
+/// and wrapped in `()`. Unknown alphabetic option tokens are surfaced to the
+/// caller so the full entry can be skipped; malformed option shapes are
+/// rejected.
 fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
     let normalized = match strip_wrapped(value, '(', ')') {
         Some(raw) => raw.trim(),
@@ -247,7 +248,6 @@ fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
             "post" => prepend = false,
             "protect" => protect = true,
             other => {
-                eprintln!("warning: invalid entry option '{}', rejecting entry", other);
                 if other
                     .chars()
                     .all(|character| character.is_ascii_alphabetic())
@@ -383,16 +383,12 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         protect,
                     },
                 ) => valid_entry(location, name, autoset, prepend, protect, None, line_number),
-                (Some(location), Some(name), EntryOptionsParseResult::InvalidToken(option)) => {
-                    valid_entry(
-                        location,
-                        name,
-                        true,
-                        false,
-                        false,
-                        Some(option),
-                        line_number,
-                    )
+                (_, _, EntryOptionsParseResult::InvalidToken(option)) => {
+                    eprintln!(
+                        "warning: unknown entry option '{}' at line {}, skipping entry",
+                        option, line_number
+                    );
+                    return None;
                 }
                 (None, _, _) => {
                     eprintln!(
@@ -1842,11 +1838,9 @@ mod tests {
     }
 
     #[test]
-    /// Ensure legacy `postfix` placement option is rejected.
+    /// Ensure legacy `postfix` placement option causes the entry to be skipped.
     fn parse_entry_line_postfix_option_is_rejected() {
-        let entry = parse_entry_line("'/tmp/tools' [tools] (postfix)", 2).unwrap();
-        assert_eq!(entry.name, "tools");
-        assert_eq!(entry.invalid_option.as_deref(), Some("postfix"));
+        assert!(parse_entry_line("'/tmp/tools' [tools] (postfix)", 2).is_none());
     }
 
     #[test]

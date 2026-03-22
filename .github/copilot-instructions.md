@@ -32,6 +32,14 @@
 - Test malicious input scenarios, such as attempts to store or load paths with shell metacharacters or escape sequences.
 - Run all tests with `cargo test --all` to ensure they pass before committing changes.
 
+## Defect Fix Methodology
+
+- For bug fixes, first reproduce the defect with a focused unit test (or integration test when behavior is CLI-only) before changing implementation code.
+- Record and verify the failing Red state by running the relevant test command and confirming the new test fails for the expected reason.
+- Implement the smallest possible fix that addresses the observed failure; avoid broad refactors unless required for correctness.
+- Re-run the focused tests first, then run `cargo test --all`, and finally run `cargo clippy --all-targets -- -D warnings`.
+- In status updates and final summaries, report defect fixes in explicit Red then Green order so the workflow is auditable.
+
 ## Project Conventions
 
 - The file format for stored paths is `'<location>' [name] (options)`, where `location` is the path being stored, `name` is an optional identifier for the path, and `options` can include `auto`, `noauto`, `pre`, and `protect`.

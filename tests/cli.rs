@@ -1696,11 +1696,20 @@ fn verify_fails_for_unknown_or_misspelled_option() {
             .env("PATH", "");
         let assert = cmd.arg("verify").assert().failure();
         let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
-        assert!(stderr.contains("error: invalid entry option"));
+        assert!(
+            stderr.contains("warning: unknown entry option"),
+            "stderr should include unknown-option warning: {}",
+            stderr
+        );
         assert!(
             stderr.contains(option),
             "stderr should include invalid option '{}': {}",
             option,
+            stderr
+        );
+        assert!(
+            stderr.contains("error: store file has no entries"),
+            "stderr should include empty-store verification error: {}",
             stderr
         );
     }
