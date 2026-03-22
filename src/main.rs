@@ -12,17 +12,46 @@ use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AutosetMode {
+    Auto,
+    NoAuto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlacementMode {
+    Prefix,
+    Postfix,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProtectionMode {
+    Protected,
+    Unprotected,
+}
+
 /// Simple representation of a stored path entry in plain text form.
 #[derive(Debug, Clone)]
 struct PathEntry {
     location: String,
     name: String,
-    autoset: bool,
-    prepend: bool,
-    protect: bool,
-    invalid_option: Option<String>,
-    original_options: Option<String>,
+    auto_mode: AutosetMode,
+    placement_mode: PlacementMode,
+    protection_mode: ProtectionMode,
     line_number: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EntryDiagnosticKind {
+    UnknownOption { option: String },
+    ConflictingOptions { left: String, right: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EntryDiagnostic {
+    line_number: usize,
+    line: String,
+    kind: EntryDiagnosticKind,
 }
 
 impl PathEntry {
@@ -31,32 +60,41 @@ impl PathEntry {
         Self {
             location: location.into(),
             name: name.into(),
-            autoset: true,
-            prepend: false,
-            protect: false,
-            invalid_option: None,
-            original_options: None,
+            auto_mode: AutosetMode::Auto,
+            placement_mode: PlacementMode::Postfix,
+            protection_mode: ProtectionMode::Unprotected,
             line_number: 0,
         }
     }
 
     // Apply parsed or CLI-provided option flags without touching metadata.
-    fn with_options(mut self, autoset: bool, prepend: bool, protect: bool) -> Self {
-        self.autoset = autoset;
-        self.prepend = prepend;
-        self.protect = protect;
+    fn with_options(
+        mut self,
+        auto_mode: AutosetMode,
+        placement_mode: PlacementMode,
+        protection_mode: ProtectionMode,
+    ) -> Self {
+        self.auto_mode = auto_mode;
+        self.placement_mode = placement_mode;
+        self.protection_mode = protection_mode;
         self
+    }
+
+    fn autoset_enabled(&self) -> bool {
+        self.auto_mode == AutosetMode::Auto
+    }
+
+    fn prepends_path(&self) -> bool {
+        self.placement_mode == PlacementMode::Prefix
+    }
+
+    fn is_protected(&self) -> bool {
+        self.protection_mode == ProtectionMode::Protected
     }
 
     // Preserve source line-number metadata for diagnostics.
     fn with_line_number(mut self, line_number: usize) -> Self {
         self.line_number = line_number;
-        self
-    }
-
-    // Preserve the raw options token for unknown-option round-trip output.
-    fn with_original_options(mut self, options_token: impl Into<String>) -> Self {
-        self.original_options = Some(options_token.into());
         self
     }
 }
@@ -65,8 +103,13 @@ const DEFAULT_STORE_FILE_NAME: &str = ".path";
 const STORE_FILE_LAYOUT_COMMENT: &str = "# layout: '<location>' [<name>] (<options>)";
 
 /// Build a built-in path entry as a `PathEntry`.
-fn builtin_path_entry(location: &str, name: &str, prepend: bool, protect: bool) -> PathEntry {
-    PathEntry::new(location, name).with_options(true, prepend, protect)
+fn builtin_path_entry(
+    location: &str,
+    name: &str,
+    placement_mode: PlacementMode,
+    protection_mode: ProtectionMode,
+) -> PathEntry {
+    PathEntry::new(location, name).with_options(AutosetMode::Auto, placement_mode, protection_mode)
 }
 
 /// Standard system paths managed by `path restore`.
@@ -75,12 +118,42 @@ fn standard_system_paths() -> &'static [PathEntry] {
     SYSTEM_PATHS
         .get_or_init(|| {
             vec![
-                builtin_path_entry("/bin", "sysbin", false, true),
-                builtin_path_entry("/sbin", "syssbin", false, true),
-                builtin_path_entry("/usr/bin", "usrbin", false, true),
-                builtin_path_entry("/usr/sbin", "usrsbin", false, true),
-                builtin_path_entry("/usr/local/bin", "usrlocalbin", false, true),
-                builtin_path_entry("/usr/local/sbin", "usrlocalsbin", false, true),
+                builtin_path_entry(
+                    "/bin",
+                    "sysbin",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Protected,
+                ),
+                builtin_path_entry(
+                    "/sbin",
+                    "syssbin",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Protected,
+                ),
+                builtin_path_entry(
+                    "/usr/bin",
+                    "usrbin",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Protected,
+                ),
+                builtin_path_entry(
+                    "/usr/sbin",
+                    "usrsbin",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Protected,
+                ),
+                builtin_path_entry(
+                    "/usr/local/bin",
+                    "usrlocalbin",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Protected,
+                ),
+                builtin_path_entry(
+                    "/usr/local/sbin",
+                    "usrlocalsbin",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Protected,
+                ),
             ]
         })
         .as_slice()
@@ -110,8 +183,18 @@ fn known_extra_paths() -> &'static [PathEntry] {
     EXTRA_PATHS
         .get_or_init(|| {
             let mut entries = vec![
-                builtin_path_entry("/opt/homebrew/bin", "homebrewbin", false, false),
-                builtin_path_entry("/opt/homebrew/sbin", "homebrewsbin", false, false),
+                builtin_path_entry(
+                    "/opt/homebrew/bin",
+                    "homebrewbin",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Unprotected,
+                ),
+                builtin_path_entry(
+                    "/opt/homebrew/sbin",
+                    "homebrewsbin",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Unprotected,
+                ),
             ];
 
             if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
@@ -119,14 +202,14 @@ fn known_extra_paths() -> &'static [PathEntry] {
                 entries.push(builtin_path_entry(
                     &format!("{}/.cargo/bin", home_str),
                     "cargo",
-                    false,
-                    false,
+                    PlacementMode::Postfix,
+                    ProtectionMode::Unprotected,
                 ));
                 entries.push(builtin_path_entry(
                     &format!("{}/.local/bin", home_str),
                     "pipx",
-                    false,
-                    false,
+                    PlacementMode::Postfix,
+                    ProtectionMode::Unprotected,
                 ));
             }
 
@@ -190,25 +273,6 @@ fn resolve_store_file_path(matches: &ArgMatches) -> PathBuf {
         .unwrap_or_else(default_store_file_path)
 }
 
-/// Parse a line from the store file.
-///
-/// Preferred format is `'<location>' [<name>] (<options>)` with fields separated
-/// by whitespace. Locations are wrapped in single quotes to make delimiter
-/// boundaries explicit.
-///
-/// `name` is wrapped in `[]` and options are wrapped in `()`.
-///
-/// `autoset` options are `auto` or `noauto`; placement options are `pre` or
-/// `post`; protection options include `protect`. Missing or blank options
-/// default to `auto` plus post and no protection.
-fn parse_autoset_value(value: &str) -> Option<bool> {
-    match value {
-        "auto" => Some(true),
-        "noauto" => Some(false),
-        _ => None,
-    }
-}
-
 /// Strip a leading and trailing single quote from a field.
 fn strip_wrapped(value: &str, open: char, close: char) -> Option<&str> {
     value
@@ -226,17 +290,43 @@ fn parse_name_field(value: &str) -> Option<String> {
     strip_wrapped(value, '[', ']').map(|name| name.to_string())
 }
 
+/// Represent parsed options with their associated diagnostic information.
+struct ParsedOptions {
+    auto_mode: AutosetMode,
+    placement_mode: PlacementMode,
+    protection_mode: ProtectionMode,
+    diagnostic: Option<EntryDiagnosticKind>,
+}
+
 /// Decode entry options from the third field.
 ///
 /// Result for decoding a store entry options field.
 enum EntryOptionsParseResult {
-    Valid {
-        autoset: bool,
-        prepend: bool,
-        protect: bool,
-        invalid_option: Option<String>,
-    },
+    Parsed(ParsedOptions),
     Malformed,
+}
+
+const MUTUALLY_EXCLUSIVE_OPTION_PAIRS: [(&str, &str); 2] = [("auto", "noauto"), ("pre", "post")];
+
+/// Build a Parsed result seeded with default option modes and an optional diagnostic.
+fn default_parsed_options_result(
+    diagnostic: Option<EntryDiagnosticKind>,
+) -> EntryOptionsParseResult {
+    EntryOptionsParseResult::Parsed(ParsedOptions {
+        auto_mode: AutosetMode::Auto,
+        placement_mode: PlacementMode::Postfix,
+        protection_mode: ProtectionMode::Unprotected,
+        diagnostic,
+    })
+}
+
+/// Construct an entry diagnostic from a parsed diagnostic kind and source metadata.
+fn entry_diagnostic(line_number: usize, line: &str, kind: EntryDiagnosticKind) -> EntryDiagnostic {
+    EntryDiagnostic {
+        line_number,
+        line: line.to_string(),
+        kind,
+    }
 }
 
 /// Supported options include autoset (`auto`/`noauto`), placement
@@ -251,40 +341,43 @@ fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
     };
 
     if normalized.is_empty() {
-        return EntryOptionsParseResult::Valid {
-            autoset: true,
-            prepend: false,
-            protect: false,
-            invalid_option: None,
-        };
+        return default_parsed_options_result(None);
     }
 
-    let mut autoset = true;
-    let mut prepend = false;
-    let mut protect = false;
-    let mut invalid_option = None;
-
-    for option in normalized
+    let options: Vec<&str> = normalized
         .split(',')
         .map(str::trim)
         .filter(|opt| !opt.is_empty())
-    {
-        if let Some(parsed_autoset) = parse_autoset_value(option) {
-            autoset = parsed_autoset;
-            continue;
-        }
+        .collect();
 
+    for (left, right) in MUTUALLY_EXCLUSIVE_OPTION_PAIRS {
+        if options.contains(&left) && options.contains(&right) {
+            return default_parsed_options_result(Some(EntryDiagnosticKind::ConflictingOptions {
+                left: left.to_string(),
+                right: right.to_string(),
+            }));
+        }
+    }
+
+    let mut auto_mode = AutosetMode::Auto;
+    let mut placement_mode = PlacementMode::Postfix;
+    let mut protection_mode = ProtectionMode::Unprotected;
+    let mut unknown_option = None;
+
+    for option in options {
         match option {
-            "pre" => prepend = true,
-            "post" => prepend = false,
-            "protect" => protect = true,
+            "auto" => auto_mode = AutosetMode::Auto,
+            "noauto" => auto_mode = AutosetMode::NoAuto,
+            "pre" => placement_mode = PlacementMode::Prefix,
+            "post" => placement_mode = PlacementMode::Postfix,
+            "protect" => protection_mode = ProtectionMode::Protected,
             other => {
                 if other
                     .chars()
                     .all(|character| character.is_ascii_alphabetic())
                 {
-                    if invalid_option.is_none() {
-                        invalid_option = Some(other.to_string());
+                    if unknown_option.is_none() {
+                        unknown_option = Some(other.to_string());
                     }
                     continue;
                 }
@@ -293,24 +386,27 @@ fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
         }
     }
 
-    EntryOptionsParseResult::Valid {
-        autoset,
-        prepend,
-        protect,
-        invalid_option,
-    }
+    EntryOptionsParseResult::Parsed(ParsedOptions {
+        auto_mode,
+        placement_mode,
+        protection_mode,
+        diagnostic: unknown_option.map(|option| EntryDiagnosticKind::UnknownOption { option }),
+    })
 }
 
 /// Render the option marker list for a stored entry.
 fn format_entry_options(entry: &PathEntry) -> String {
-    let autoset = if entry.autoset { "auto" } else { "noauto" };
+    let autoset = match entry.auto_mode {
+        AutosetMode::Auto => "auto",
+        AutosetMode::NoAuto => "noauto",
+    };
     let mut options = vec![autoset.to_string()];
 
-    if entry.prepend {
+    if entry.prepends_path() {
         options.push("pre".to_string());
     }
 
-    if entry.protect {
+    if entry.is_protected() {
         options.push("protect".to_string());
     }
 
@@ -341,7 +437,10 @@ fn malformed_nameless_entry(location: &str, line_number: usize) -> PathEntry {
     PathEntry::new(strip_trailing_slash(location), String::new()).with_line_number(line_number)
 }
 
-fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
+fn parse_entry_line_with_diagnostic(
+    line: &str,
+    line_number: usize,
+) -> Option<(PathEntry, Option<EntryDiagnostic>)> {
     let trimmed = line.trim();
 
     if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -350,28 +449,29 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
 
     let parts = split_store_fields(line);
 
-    let entry = match parts.as_slice() {
+    let parsed = match parts.as_slice() {
         [location, name] => {
             let parsed_location = strip_single_quotes(location);
             let parsed_name = parse_name_field(name);
             match (parsed_location, parsed_name) {
-                (Some(location), Some(name)) => {
+                (Some(location), Some(name)) => (
                     PathEntry::new(strip_trailing_slash(location), name)
-                        .with_line_number(line_number)
-                }
+                        .with_line_number(line_number),
+                    None,
+                ),
                 (None, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
                         line_number
                     );
-                    malformed_nameless_entry(location, line_number)
+                    (malformed_nameless_entry(location, line_number), None)
                 }
                 (_, None) => {
                     eprintln!(
                         "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
                         line_number
                     );
-                    malformed_nameless_entry(location, line_number)
+                    (malformed_nameless_entry(location, line_number), None)
                 }
             }
         }
@@ -381,45 +481,41 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
             let parsed_options = parse_entry_options(options);
 
             match (parsed_location, parsed_name, parsed_options) {
-                (
-                    Some(location),
-                    Some(name),
-                    EntryOptionsParseResult::Valid {
-                        autoset,
-                        prepend,
-                        protect,
-                        invalid_option,
-                    },
-                ) => {
-                    let mut entry = PathEntry::new(strip_trailing_slash(location), name)
-                        .with_options(autoset, prepend, protect)
+                (Some(location), Some(name), EntryOptionsParseResult::Parsed(options)) => {
+                    let entry = PathEntry::new(strip_trailing_slash(location), name)
+                        .with_options(
+                            options.auto_mode,
+                            options.placement_mode,
+                            options.protection_mode,
+                        )
                         .with_line_number(line_number);
-                    entry.invalid_option = invalid_option;
-                    if entry.invalid_option.is_some() {
-                        entry = entry.with_original_options(options.as_str());
-                    }
-                    entry
+
+                    let diagnostic = options
+                        .diagnostic
+                        .map(|kind| entry_diagnostic(line_number, line, kind));
+
+                    (entry, diagnostic)
                 }
                 (None, _, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
                         line_number
                     );
-                    malformed_nameless_entry(location, line_number)
+                    (malformed_nameless_entry(location, line_number), None)
                 }
                 (_, None, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
                         line_number
                     );
-                    malformed_nameless_entry(location, line_number)
+                    (malformed_nameless_entry(location, line_number), None)
                 }
                 (_, _, EntryOptionsParseResult::Malformed) => {
                     eprintln!(
                         "warning: malformed entry at line {}: options must be wrapped in '(' and ')'",
                         line_number
                     );
-                    malformed_nameless_entry(location, line_number)
+                    (malformed_nameless_entry(location, line_number), None)
                 }
             }
         }
@@ -428,33 +524,27 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                 "warning: malformed entry at line {}: missing required name field",
                 line_number
             );
-            malformed_nameless_entry(location, line_number)
+            (malformed_nameless_entry(location, line_number), None)
         }
         _ => {
             eprintln!(
                 "warning: malformed entry at line {}: expected '<location>' [<name>] (<options>) (or omit options to default to auto/post)",
                 line_number
             );
-            malformed_nameless_entry(trimmed, line_number)
+            (malformed_nameless_entry(trimmed, line_number), None)
         }
     };
 
-    Some(entry)
+    Some(parsed)
+}
+
+#[cfg(test)]
+fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
+    parse_entry_line_with_diagnostic(line, line_number).map(|(entry, _)| entry)
 }
 
 /// Serialize an entry back into a line.
 fn format_entry_line(entry: &PathEntry) -> String {
-    if entry.invalid_option.is_some() {
-        if let Some(options_token) = entry.original_options.as_deref() {
-            return format!(
-                "{} [{}] {}",
-                quote_store_location_field(&entry.location),
-                entry.name,
-                options_token
-            );
-        }
-    }
-
     format!(
         "{} [{}] ({})",
         quote_store_location_field(&entry.location),
@@ -463,23 +553,39 @@ fn format_entry_line(entry: &PathEntry) -> String {
     )
 }
 
-/// Load entries from the store file; if the file doesn't exist return an empty
-/// vector.
-fn load_entries(store_file: &Path) -> io::Result<Vec<PathEntry>> {
+#[derive(Debug, Default)]
+struct LoadedEntries {
+    entries: Vec<PathEntry>,
+    diagnostics: Vec<EntryDiagnostic>,
+}
+
+/// Load entries and parser diagnostics from the store file.
+fn load_entries_with_diagnostics(store_file: &Path) -> io::Result<LoadedEntries> {
     if !store_file.exists() {
-        return Ok(Vec::new());
+        return Ok(LoadedEntries::default());
     }
 
     let file = fs::File::open(store_file)?;
     let reader = io::BufReader::new(file);
-    let mut entries = Vec::new();
+    let mut loaded = LoadedEntries::default();
+
     for (index, line) in reader.lines().enumerate() {
         let line = line?;
-        if let Some(e) = parse_entry_line(&line, index + 1) {
-            entries.push(e);
+        if let Some((entry, diagnostic)) = parse_entry_line_with_diagnostic(&line, index + 1) {
+            loaded.entries.push(entry);
+            if let Some(diagnostic) = diagnostic {
+                loaded.diagnostics.push(diagnostic);
+            }
         }
     }
-    Ok(entries)
+
+    Ok(loaded)
+}
+
+/// Load entries from the store file; if the file doesn't exist return an empty
+/// vector.
+fn load_entries(store_file: &Path) -> io::Result<Vec<PathEntry>> {
+    Ok(load_entries_with_diagnostics(store_file)?.entries)
 }
 
 /// Load entries or print an error and terminate.
@@ -521,29 +627,68 @@ fn save_entries(store_file: &Path, entries: &[PathEntry]) -> io::Result<()> {
     fs::write(store_file, data)
 }
 
-fn report_invalid_option(level: &str, store_file: &Path, entry: &PathEntry) {
-    let invalid_option = entry.invalid_option.as_deref().unwrap_or("<unknown>");
+fn report_invalid_option(level: &str, store_file: &Path, diagnostic: &EntryDiagnostic) {
+    let invalid_option = match &diagnostic.kind {
+        EntryDiagnosticKind::UnknownOption { option } => option.as_str(),
+        _ => "<unknown>",
+    };
     eprintln!(
         "{}: unknown entry option '{}' at line {} in {}",
         level,
         invalid_option,
-        entry.line_number,
+        diagnostic.line_number,
         store_file.display()
     );
-    eprintln!("{}: {}", level, format_entry_line(entry));
+    eprintln!("{}: {}", level, diagnostic.line);
+}
+
+fn report_conflicting_options(store_file: &Path, diagnostic: &EntryDiagnostic) {
+    let (left, right) = match &diagnostic.kind {
+        EntryDiagnosticKind::ConflictingOptions { left, right } => (left.as_str(), right.as_str()),
+        _ => ("<unknown>", "<unknown>"),
+    };
+    eprintln!(
+        "error: conflicting entry options '{}' and '{}' at line {} in {}",
+        left,
+        right,
+        diagnostic.line_number,
+        store_file.display()
+    );
+    eprintln!("error: {}", diagnostic.line);
 }
 
 /// Check the existing entries, reporting any whose `location` does not
 /// currently exist. Nameless/duplicate names are fatal errors; missing
 /// locations are warnings only. Unknown option handling is controlled by the
 /// caller.
-fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry], fail_on_invalid_option: bool) {
-    let mut invalid_entries = entries
+fn validate_loaded_entries(
+    store_file: &Path,
+    entries: &[PathEntry],
+    diagnostics: &[EntryDiagnostic],
+    fail_on_invalid_option: bool,
+) {
+    let conflicting_entries: Vec<_> = diagnostics
         .iter()
-        .filter(|entry| entry.invalid_option.is_some())
+        .filter(|diagnostic| {
+            matches!(
+                diagnostic.kind,
+                EntryDiagnosticKind::ConflictingOptions { .. }
+            )
+        })
+        .collect();
+    if !conflicting_entries.is_empty() {
+        for diagnostic in conflicting_entries {
+            report_conflicting_options(store_file, diagnostic);
+        }
+        std::process::exit(1);
+    }
+
+    let mut invalid_entries = diagnostics
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.kind, EntryDiagnosticKind::UnknownOption { .. }))
         .peekable();
     if invalid_entries.peek().is_some() {
-        for entry in invalid_entries {
+        for diagnostic in invalid_entries {
             report_invalid_option(
                 if fail_on_invalid_option {
                     "error"
@@ -551,7 +696,7 @@ fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry], fail_on_inv
                     "warning"
                 },
                 store_file,
-                entry,
+                diagnostic,
             );
         }
 
@@ -674,8 +819,8 @@ fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry], fail_on_inv
 ///
 /// Returns an I/O error only if loading entries fails.
 fn validate_entries(store_file: &Path) -> io::Result<()> {
-    let entries = load_entries(store_file)?;
-    validate_loaded_entries(store_file, &entries, false);
+    let loaded = load_entries_with_diagnostics(store_file)?;
+    validate_loaded_entries(store_file, &loaded.entries, &loaded.diagnostics, false);
     Ok(())
 }
 
@@ -1012,7 +1157,11 @@ fn format_list_entry(entry: &PathEntry) -> String {
 fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
     let mut location = add_matches.value_of("location").unwrap().to_string();
     let mut resolved_by_name = false;
-    let prepend = add_matches.is_present("pre");
+    let placement = if add_matches.is_present("pre") {
+        PlacementMode::Prefix
+    } else {
+        PlacementMode::Postfix
+    };
 
     if let Some(entries) = load_entries_or_warn(
         store_file,
@@ -1041,8 +1190,16 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
     }
 
     let name_opt = add_matches.value_of("name").map(|value| value.to_string());
-    let autoset = !add_matches.is_present("noauto");
-    let protect = add_matches.is_present("protect");
+    let auto_mode = if add_matches.is_present("noauto") {
+        AutosetMode::NoAuto
+    } else {
+        AutosetMode::Auto
+    };
+    let protection_mode = if add_matches.is_present("protect") {
+        ProtectionMode::Protected
+    } else {
+        ProtectionMode::Unprotected
+    };
 
     if let Some(name) = name_opt {
         if !is_valid_name(&name) {
@@ -1078,9 +1235,11 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
                 std::process::exit(1);
             }
 
-            entries.push(
-                PathEntry::new(location.clone(), name).with_options(autoset, prepend, protect),
-            );
+            entries.push(PathEntry::new(location.clone(), name).with_options(
+                auto_mode,
+                placement,
+                protection_mode,
+            ));
 
             if let Err(error) = save_entries(store_file, &entries) {
                 eprintln!("warning: failed to update store file: {}", error);
@@ -1093,7 +1252,7 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
     let should_add = !path_contains_segment(&current, &location);
 
     let updated = if should_add {
-        compose_path(&current, &location, prepend)
+        compose_path(&current, &location, placement == PlacementMode::Prefix)
     } else {
         current
     };
@@ -1127,7 +1286,7 @@ fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
 
     if let Some(entries) = loaded_entries.as_ref().filter(|_| !resolved_by_name) {
         if let Some(entry) = entries.iter().find(|entry| entry.name == argument) {
-            if entry.protect && !force_remove {
+            if entry.is_protected() && !force_remove {
                 eprintln!(
                     "error: entry '{}' is protected and cannot be removed with 'path remove'",
                     argument
@@ -1168,7 +1327,7 @@ fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
 
         if let Some(entries) = loaded_entries.as_ref() {
             if let Some(entry) = entries.iter().find(|entry| {
-                entry.protect && entry.location == location_to_remove && !force_remove
+                entry.is_protected() && entry.location == location_to_remove && !force_remove
             }) {
                 eprintln!(
                     "error: entry '{}' is protected and cannot be removed with 'path remove'",
@@ -1328,9 +1487,9 @@ fn handle_load(store_file: &Path) {
     let entries = load_entries_or_exit(store_file);
 
     let mut current = env::var("PATH").unwrap_or_default();
-    for entry in entries.into_iter().filter(|entry| entry.autoset) {
+    for entry in entries.into_iter().filter(|entry| entry.autoset_enabled()) {
         if !path_contains_segment(&current, &entry.location) {
-            current = compose_path(&current, &entry.location, entry.prepend);
+            current = compose_path(&current, &entry.location, entry.prepends_path());
         }
     }
 
@@ -1347,14 +1506,20 @@ fn handle_verify(store_file: &Path) {
         std::process::exit(1);
     }
 
-    let entries = load_entries_or_exit(store_file);
+    let loaded = match load_entries_with_diagnostics(store_file) {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            eprintln!("error: failed to load entries: {}", error);
+            std::process::exit(1);
+        }
+    };
 
-    if entries.is_empty() {
+    if loaded.entries.is_empty() {
         eprintln!("error: store file has no entries: {}", store_file.display());
         std::process::exit(1);
     }
 
-    validate_loaded_entries(store_file, &entries, true);
+    validate_loaded_entries(store_file, &loaded.entries, &loaded.diagnostics, true);
     println!("Path file is valid.");
 }
 
@@ -1407,7 +1572,7 @@ fn resolve_segment_type(segment: &str, entries: &[PathEntry]) -> String {
     let normalized = strip_trailing_slash(segment);
 
     if let Some(system) = find_system_path_by_location(&normalized) {
-        if system.protect {
+        if system.is_protected() {
             return "system [protected]".to_string();
         }
         return "system".to_string();
@@ -1419,7 +1584,7 @@ fn resolve_segment_type(segment: &str, entries: &[PathEntry]) -> String {
 
     if entries
         .iter()
-        .any(|entry| strip_trailing_slash(&entry.location) == normalized && entry.protect)
+        .any(|entry| strip_trailing_slash(&entry.location) == normalized && entry.is_protected())
     {
         return "[protected]".to_string();
     }
@@ -1512,26 +1677,26 @@ mod tests {
 
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "tools");
-        assert!(entry.autoset);
-        assert!(!entry.prepend);
-        assert!(!entry.protect);
-        assert!(entry.invalid_option.is_none());
-        assert!(entry.original_options.is_none());
+        assert_eq!(entry.auto_mode, AutosetMode::Auto);
+        assert_eq!(entry.placement_mode, PlacementMode::Postfix);
+        assert_eq!(entry.protection_mode, ProtectionMode::Unprotected);
         assert_eq!(entry.line_number, 0);
     }
 
     #[test]
     /// Ensure `with_options` updates only the explicit option flags.
     fn path_entry_with_options_updates_option_flags() {
-        let entry = PathEntry::new("/tmp/tools", "tools").with_options(false, true, true);
+        let entry = PathEntry::new("/tmp/tools", "tools").with_options(
+            AutosetMode::NoAuto,
+            PlacementMode::Prefix,
+            ProtectionMode::Protected,
+        );
 
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "tools");
-        assert!(!entry.autoset);
-        assert!(entry.prepend);
-        assert!(entry.protect);
-        assert!(entry.invalid_option.is_none());
-        assert!(entry.original_options.is_none());
+        assert!(!entry.autoset_enabled());
+        assert!(entry.prepends_path());
+        assert!(entry.is_protected());
         assert_eq!(entry.line_number, 0);
     }
 
@@ -1542,23 +1707,96 @@ mod tests {
 
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "tools");
-        assert!(entry.autoset);
-        assert!(!entry.prepend);
-        assert!(!entry.protect);
-        assert!(entry.original_options.is_none());
+        assert!(entry.autoset_enabled());
+        assert!(!entry.prepends_path());
+        assert!(!entry.is_protected());
         assert_eq!(entry.line_number, 4);
     }
 
     #[test]
-    /// Ensure `with_original_options` stores the raw options token for round-trip output.
-    fn path_entry_with_original_options_preserves_raw_token() {
-        let entry = PathEntry::new("/tmp/tools", "tools")
-            .with_options(false, true, true)
-            .with_original_options("(noauto,pre,protect,postfix)");
+    /// Ensure default parsed options helper returns default option modes without diagnostics.
+    fn default_parsed_options_result_without_diagnostic_uses_defaults() {
+        let parsed = default_parsed_options_result(None);
 
+        match parsed {
+            EntryOptionsParseResult::Parsed(options) => {
+                assert_eq!(options.auto_mode, AutosetMode::Auto);
+                assert_eq!(options.placement_mode, PlacementMode::Postfix);
+                assert_eq!(options.protection_mode, ProtectionMode::Unprotected);
+                assert!(options.diagnostic.is_none());
+            }
+            EntryOptionsParseResult::Malformed => {
+                panic!("expected parsed default option result");
+            }
+        }
+    }
+
+    #[test]
+    /// Ensure default parsed options helper preserves a supplied diagnostic.
+    fn default_parsed_options_result_with_diagnostic_preserves_diagnostic() {
+        let parsed = default_parsed_options_result(Some(EntryDiagnosticKind::ConflictingOptions {
+            left: "auto".to_string(),
+            right: "noauto".to_string(),
+        }));
+
+        match parsed {
+            EntryOptionsParseResult::Parsed(options) => {
+                assert_eq!(options.auto_mode, AutosetMode::Auto);
+                assert_eq!(options.placement_mode, PlacementMode::Postfix);
+                assert_eq!(options.protection_mode, ProtectionMode::Unprotected);
+                assert_eq!(
+                    options.diagnostic,
+                    Some(EntryDiagnosticKind::ConflictingOptions {
+                        left: "auto".to_string(),
+                        right: "noauto".to_string(),
+                    })
+                );
+            }
+            EntryOptionsParseResult::Malformed => {
+                panic!("expected parsed default option result");
+            }
+        }
+    }
+
+    #[test]
+    /// Ensure unknown options are reported as diagnostics separate from `PathEntry`.
+    fn parse_entry_line_reports_unknown_option_diagnostic() {
+        let line = "'/tmp/tools' [tools] (noauto,pre,protect,postfix)";
+        let (entry, diagnostic) = parse_entry_line_with_diagnostic(line, 2).unwrap();
+
+        assert_eq!(entry.name, "tools");
+        assert!(!entry.autoset_enabled());
+        assert!(entry.prepends_path());
+        assert!(entry.is_protected());
+
+        let diagnostic = diagnostic.expect("expected unknown option diagnostic");
+        assert_eq!(diagnostic.line_number, 2);
+        assert_eq!(diagnostic.line, line);
         assert_eq!(
-            entry.original_options.as_deref(),
-            Some("(noauto,pre,protect,postfix)")
+            diagnostic.kind,
+            EntryDiagnosticKind::UnknownOption {
+                option: "postfix".to_string()
+            }
+        );
+    }
+
+    #[test]
+    /// Ensure mutually-exclusive options are reported as diagnostics.
+    fn parse_entry_line_reports_conflicting_options_diagnostic() {
+        let line = "'/tmp/tools' [tools] (auto,noauto)";
+        let (entry, diagnostic) = parse_entry_line_with_diagnostic(line, 9).unwrap();
+
+        assert_eq!(entry.name, "tools");
+
+        let diagnostic = diagnostic.expect("expected conflicting options diagnostic");
+        assert_eq!(diagnostic.line_number, 9);
+        assert_eq!(diagnostic.line, line);
+        assert_eq!(
+            diagnostic.kind,
+            EntryDiagnosticKind::ConflictingOptions {
+                left: "auto".to_string(),
+                right: "noauto".to_string(),
+            }
         );
     }
 
@@ -1600,9 +1838,9 @@ mod tests {
         let entry = parse_entry_line("'/tmp/tools/' [tools] (noauto)", 7).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "tools");
-        assert!(!entry.autoset);
-        assert!(!entry.prepend);
-        assert!(!entry.protect);
+        assert!(!entry.autoset_enabled());
+        assert!(!entry.prepends_path());
+        assert!(!entry.is_protected());
         assert_eq!(entry.line_number, 7);
     }
 
@@ -1612,9 +1850,9 @@ mod tests {
         let entry = parse_entry_line("/tmp/tools\ttools\tnoauto", 8).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "");
-        assert!(entry.autoset);
-        assert!(!entry.prepend);
-        assert!(!entry.protect);
+        assert!(entry.autoset_enabled());
+        assert!(!entry.prepends_path());
+        assert!(!entry.is_protected());
     }
 
     #[test]
@@ -1623,9 +1861,9 @@ mod tests {
         let entry = parse_entry_line("/tmp/tools", 3).unwrap();
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "");
-        assert!(entry.autoset);
-        assert!(!entry.prepend);
-        assert!(!entry.protect);
+        assert!(entry.autoset_enabled());
+        assert!(!entry.prepends_path());
+        assert!(!entry.is_protected());
     }
 
     #[test]
@@ -1769,7 +2007,9 @@ mod tests {
         assert!(locations.contains(&"/opt/homebrew/bin"));
         assert!(locations.contains(&"/opt/homebrew/sbin"));
         // All extra entries must be unprotected.
-        assert!(extras.iter().all(|e| !e.protect));
+        assert!(extras
+            .iter()
+            .all(|e| e.protection_mode == ProtectionMode::Unprotected));
         // HOME-relative entries are present when HOME is set.
         if let Ok(home) = env::var("HOME") {
             let cargo = format!("{}/.cargo/bin", home);
@@ -1783,12 +2023,16 @@ mod tests {
     /// Ensure built-in system and extra paths have the expected default flags.
     fn built_in_paths_use_expected_option_flags() {
         assert!(standard_system_paths().iter().all(|entry| {
-            entry.autoset && !entry.prepend && entry.protect && entry.invalid_option.is_none()
+            entry.auto_mode == AutosetMode::Auto
+                && entry.placement_mode == PlacementMode::Postfix
+                && entry.protection_mode == ProtectionMode::Protected
         }));
 
         let extras = known_extra_paths();
         assert!(extras.iter().all(|entry| {
-            entry.autoset && !entry.prepend && !entry.protect && entry.invalid_option.is_none()
+            entry.auto_mode == AutosetMode::Auto
+                && entry.placement_mode == PlacementMode::Postfix
+                && entry.protection_mode == ProtectionMode::Unprotected
         }));
     }
 
@@ -1797,7 +2041,7 @@ mod tests {
     fn find_extra_path_by_location_returns_correct_entry() {
         let entry = find_extra_path_by_location("/opt/homebrew/bin").unwrap();
         assert_eq!(entry.name, "homebrewbin");
-        assert!(!entry.protect);
+        assert!(!entry.is_protected());
 
         assert!(find_extra_path_by_location("/no/such/path").is_none());
     }
@@ -1845,11 +2089,9 @@ mod tests {
         let entries = vec![PathEntry {
             location: "/opt/locked".to_string(),
             name: "locked".to_string(),
-            autoset: true,
-            prepend: false,
-            protect: true,
-            invalid_option: None,
-            original_options: None,
+            auto_mode: AutosetMode::Auto,
+            placement_mode: PlacementMode::Postfix,
+            protection_mode: ProtectionMode::Protected,
             line_number: 1,
         }];
 
@@ -1864,15 +2106,15 @@ mod tests {
         assert_eq!(format_list_entry(&entry), "/usr/local/bin [tools] (auto)");
 
         let mut same = test_entry("/usr/bin", "/usr/bin");
-        same.autoset = false;
+        same.auto_mode = AutosetMode::NoAuto;
         assert_eq!(format_list_entry(&same), "/usr/bin [/usr/bin] (noauto)");
 
         let mut pre = test_entry("/opt/pre", "pre");
-        pre.prepend = true;
+        pre.placement_mode = PlacementMode::Prefix;
         assert_eq!(format_list_entry(&pre), "/opt/pre [pre] (auto,pre)");
 
         let mut protect = test_entry("/opt/protect", "protect");
-        protect.protect = true;
+        protect.protection_mode = ProtectionMode::Protected;
         assert_eq!(
             format_list_entry(&protect),
             "/opt/protect [protect] (auto,protect)"
@@ -1883,35 +2125,35 @@ mod tests {
     /// Ensure missing third fields are interpreted as `auto` for manual edits.
     fn parse_entry_line_missing_third_field_defaults_to_auto() {
         let entry = parse_entry_line("'/tmp/tools' [tools]", 2).unwrap();
-        assert!(entry.autoset);
-        assert!(!entry.prepend);
+        assert!(entry.autoset_enabled());
+        assert!(!entry.prepends_path());
     }
 
     #[test]
     /// Ensure `(pre)` enables prepend while defaulting autoset to `auto`.
     fn parse_entry_line_pre_option_enables_prepend() {
         let entry = parse_entry_line("'/tmp/tools' [tools] (pre)", 2).unwrap();
-        assert!(entry.autoset);
-        assert!(entry.prepend);
-        assert!(!entry.protect);
+        assert!(entry.autoset_enabled());
+        assert!(entry.prepends_path());
+        assert!(!entry.is_protected());
     }
 
     #[test]
     /// Ensure comma-delimited options parse both autoset and prepend settings.
     fn parse_entry_line_combined_options_parse() {
         let entry = parse_entry_line("'/tmp/tools' [tools] (noauto,pre)", 2).unwrap();
-        assert!(!entry.autoset);
-        assert!(entry.prepend);
-        assert!(!entry.protect);
+        assert!(!entry.autoset_enabled());
+        assert!(entry.prepends_path());
+        assert!(!entry.is_protected());
     }
 
     #[test]
     /// Ensure `protect` is parsed as a supported option.
     fn parse_entry_line_protect_option_enables_protection() {
         let entry = parse_entry_line("'/tmp/tools' [tools] (auto,protect)", 2).unwrap();
-        assert!(entry.autoset);
-        assert!(!entry.prepend);
-        assert!(entry.protect);
+        assert!(entry.autoset_enabled());
+        assert!(!entry.prepends_path());
+        assert!(entry.is_protected());
     }
 
     #[test]
@@ -1953,17 +2195,23 @@ mod tests {
     /// recognized options still take effect.
     fn parse_entry_line_postfix_option_preserves_valid_options() {
         let line = "'/tmp/tools' [tools] (noauto,pre,protect,postfix)";
-        let entry = parse_entry_line(line, 2).unwrap();
+        let (entry, diagnostic) = parse_entry_line_with_diagnostic(line, 2).unwrap();
         assert_eq!(entry.name, "tools");
-        assert!(!entry.autoset);
-        assert!(entry.prepend);
-        assert!(entry.protect);
-        assert_eq!(entry.invalid_option.as_deref(), Some("postfix"));
+        assert!(!entry.autoset_enabled());
+        assert!(entry.prepends_path());
+        assert!(entry.is_protected());
+
+        let diagnostic = diagnostic.expect("expected unknown option diagnostic");
         assert_eq!(
-            entry.original_options.as_deref(),
-            Some("(noauto,pre,protect,postfix)")
+            diagnostic.kind,
+            EntryDiagnosticKind::UnknownOption {
+                option: "postfix".to_string()
+            }
         );
-        assert_eq!(format_entry_line(&entry), line);
+        assert_eq!(
+            format_entry_line(&entry),
+            "'/tmp/tools' [tools] (noauto,pre,protect)"
+        );
     }
 
     #[test]
@@ -1972,9 +2220,9 @@ mod tests {
         let entry = parse_entry_line("'/tmp/my tools' [tools] (auto)", 4).unwrap();
         assert_eq!(entry.location, "/tmp/my tools");
         assert_eq!(entry.name, "tools");
-        assert!(entry.autoset);
-        assert!(!entry.prepend);
-        assert!(!entry.protect);
+        assert!(entry.autoset_enabled());
+        assert!(!entry.prepends_path());
+        assert!(!entry.is_protected());
     }
 
     #[test]
@@ -1997,7 +2245,7 @@ mod tests {
         let entry = parse_entry_line("/tmp/my tools tools auto", 5).unwrap();
         assert_eq!(entry.location, "/tmp/my tools tools auto");
         assert_eq!(entry.name, "");
-        assert!(entry.autoset);
+        assert!(entry.autoset_enabled());
     }
 
     #[test]
@@ -2007,15 +2255,15 @@ mod tests {
         assert_eq!(format_entry_line(&auto), "'/tmp/a' [a] (auto)");
 
         let mut noauto = test_entry("/tmp/b", "b");
-        noauto.autoset = false;
+        noauto.auto_mode = AutosetMode::NoAuto;
         assert_eq!(format_entry_line(&noauto), "'/tmp/b' [b] (noauto)");
 
         let mut pre = test_entry("/tmp/c", "c");
-        pre.prepend = true;
+        pre.placement_mode = PlacementMode::Prefix;
         assert_eq!(format_entry_line(&pre), "'/tmp/c' [c] (auto,pre)");
 
         let mut protect = test_entry("/tmp/d", "d");
-        protect.protect = true;
+        protect.protection_mode = ProtectionMode::Protected;
         assert_eq!(format_entry_line(&protect), "'/tmp/d' [d] (auto,protect)");
     }
 
@@ -2030,5 +2278,70 @@ mod tests {
             format_entry_line(&backslash),
             "'/tmp/my\\tools' [tools] (auto)"
         );
+    }
+
+    #[test]
+    /// Ensure ParsedOptions can be constructed directly.
+    fn parsed_options_can_be_constructed() {
+        let options = ParsedOptions {
+            auto_mode: AutosetMode::NoAuto,
+            placement_mode: PlacementMode::Prefix,
+            protection_mode: ProtectionMode::Protected,
+            diagnostic: Some(EntryDiagnosticKind::UnknownOption {
+                option: "badopt".to_string(),
+            }),
+        };
+
+        assert_eq!(options.auto_mode, AutosetMode::NoAuto);
+        assert_eq!(options.placement_mode, PlacementMode::Prefix);
+        assert_eq!(options.protection_mode, ProtectionMode::Protected);
+        assert!(options.diagnostic.is_some());
+    }
+
+    #[test]
+    /// Ensure ParsedOptions can be extracted from Parsed variant.
+    fn parsed_options_extracted_from_variant() {
+        let parsed = default_parsed_options_result(Some(EntryDiagnosticKind::UnknownOption {
+            option: "unknown".to_string(),
+        }));
+
+        match parsed {
+            EntryOptionsParseResult::Parsed(options) => {
+                assert_eq!(options.auto_mode, AutosetMode::Auto);
+                assert_eq!(options.placement_mode, PlacementMode::Postfix);
+                assert_eq!(options.protection_mode, ProtectionMode::Unprotected);
+                assert!(options.diagnostic.is_some());
+            }
+            EntryOptionsParseResult::Malformed => {
+                panic!("expected parsed options result");
+            }
+        }
+    }
+
+    #[test]
+    /// Ensure entry_diagnostic helper wraps diagnostic kind with line metadata.
+    fn entry_diagnostic_wraps_kind_with_metadata() {
+        let kind = EntryDiagnosticKind::UnknownOption {
+            option: "badopt".to_string(),
+        };
+        let diagnostic = entry_diagnostic(5, "'/tmp/test' [test]", kind.clone());
+
+        assert_eq!(diagnostic.line_number, 5);
+        assert_eq!(diagnostic.line, "'/tmp/test' [test]");
+        assert_eq!(diagnostic.kind, kind);
+    }
+
+    #[test]
+    /// Ensure entry_diagnostic helper works with conflicting options diagnostic.
+    fn entry_diagnostic_wraps_conflicting_options() {
+        let kind = EntryDiagnosticKind::ConflictingOptions {
+            left: "auto".to_string(),
+            right: "noauto".to_string(),
+        };
+        let diagnostic = entry_diagnostic(10, "'/tmp/conflict' [c] (auto,noauto)", kind.clone());
+
+        assert_eq!(diagnostic.line_number, 10);
+        assert_eq!(diagnostic.line, "'/tmp/conflict' [c] (auto,noauto)");
+        assert_eq!(diagnostic.kind, kind);
     }
 }
