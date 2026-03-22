@@ -27,6 +27,7 @@
 - Do not batch multiple new helper implementations into a single Green step unless each helper's corresponding failing test state was already observed and recorded during a prior Red step.
 - When reporting work, explicitly indicate the observed **Red** failure before the **Green** implementation step so the workflow is auditable in the conversation history.
 - Every new function should have a corresponding unit test.
+- Refactors are not exempt: when a refactor introduces any new function (including private helpers), add corresponding unit tests for each new function in the same change.
 - Integration tests should be created to test the output of the CLI commands.
 - Be comprehensive in testing edge cases, such as invalid input formats, missing files, and permission issues.
 - Test malicious input scenarios, such as attempts to store or load paths with shell metacharacters or escape sequences.

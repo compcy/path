@@ -303,6 +303,20 @@ enum EntryOptionsParseResult {
     Malformed,
 }
 
+const MUTUALLY_EXCLUSIVE_OPTION_PAIRS: [(&str, &str); 2] = [("auto", "noauto"), ("pre", "post")];
+
+// Build a Parsed result seeded with default option modes and an optional diagnostic.
+fn default_parsed_options_result(
+    diagnostic: Option<EntryDiagnosticKind>,
+) -> EntryOptionsParseResult {
+    EntryOptionsParseResult::Parsed {
+        auto_mode: AutosetMode::Auto,
+        placement_mode: PlacementMode::Postfix,
+        protection_mode: ProtectionMode::Unprotected,
+        diagnostic,
+    }
+}
+
 /// Supported options include autoset (`auto`/`noauto`), placement
 /// (`pre`/`post`), and protection (`protect`). Options may be comma-delimited
 /// and wrapped in `()`. Unknown alphabetic option tokens are returned to the
@@ -315,12 +329,7 @@ fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
     };
 
     if normalized.is_empty() {
-        return EntryOptionsParseResult::Parsed {
-            auto_mode: AutosetMode::Auto,
-            placement_mode: PlacementMode::Postfix,
-            protection_mode: ProtectionMode::Unprotected,
-            diagnostic: None,
-        };
+        return default_parsed_options_result(None);
     }
 
     let options: Vec<&str> = normalized
@@ -329,17 +338,12 @@ fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
         .filter(|opt| !opt.is_empty())
         .collect();
 
-    for (left, right) in [("auto", "noauto"), ("pre", "post")] {
+    for (left, right) in MUTUALLY_EXCLUSIVE_OPTION_PAIRS {
         if options.contains(&left) && options.contains(&right) {
-            return EntryOptionsParseResult::Parsed {
-                auto_mode: AutosetMode::Auto,
-                placement_mode: PlacementMode::Postfix,
-                protection_mode: ProtectionMode::Unprotected,
-                diagnostic: Some(EntryDiagnosticKind::ConflictingOptions {
-                    left: left.to_string(),
-                    right: right.to_string(),
-                }),
-            };
+            return default_parsed_options_result(Some(EntryDiagnosticKind::ConflictingOptions {
+                left: left.to_string(),
+                right: right.to_string(),
+            }));
         }
     }
 
@@ -1702,6 +1706,61 @@ mod tests {
         assert!(!entry.prepends_path());
         assert!(!entry.is_protected());
         assert_eq!(entry.line_number, 4);
+    }
+
+    #[test]
+    /// Ensure default parsed options helper returns default option modes without diagnostics.
+    fn default_parsed_options_result_without_diagnostic_uses_defaults() {
+        let parsed = default_parsed_options_result(None);
+
+        match parsed {
+            EntryOptionsParseResult::Parsed {
+                auto_mode,
+                placement_mode,
+                protection_mode,
+                diagnostic,
+            } => {
+                assert_eq!(auto_mode, AutosetMode::Auto);
+                assert_eq!(placement_mode, PlacementMode::Postfix);
+                assert_eq!(protection_mode, ProtectionMode::Unprotected);
+                assert!(diagnostic.is_none());
+            }
+            EntryOptionsParseResult::Malformed => {
+                panic!("expected parsed default option result");
+            }
+        }
+    }
+
+    #[test]
+    /// Ensure default parsed options helper preserves a supplied diagnostic.
+    fn default_parsed_options_result_with_diagnostic_preserves_diagnostic() {
+        let parsed = default_parsed_options_result(Some(EntryDiagnosticKind::ConflictingOptions {
+            left: "auto".to_string(),
+            right: "noauto".to_string(),
+        }));
+
+        match parsed {
+            EntryOptionsParseResult::Parsed {
+                auto_mode,
+                placement_mode,
+                protection_mode,
+                diagnostic,
+            } => {
+                assert_eq!(auto_mode, AutosetMode::Auto);
+                assert_eq!(placement_mode, PlacementMode::Postfix);
+                assert_eq!(protection_mode, ProtectionMode::Unprotected);
+                assert_eq!(
+                    diagnostic,
+                    Some(EntryDiagnosticKind::ConflictingOptions {
+                        left: "auto".to_string(),
+                        right: "noauto".to_string(),
+                    })
+                );
+            }
+            EntryOptionsParseResult::Malformed => {
+                panic!("expected parsed default option result");
+            }
+        }
     }
 
     #[test]
