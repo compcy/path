@@ -38,10 +38,20 @@ struct PathEntry {
     auto_mode: AutosetMode,
     placement_mode: PlacementMode,
     protection_mode: ProtectionMode,
-    invalid_option: Option<String>,
-    conflicting_options: Option<(String, String)>,
-    original_options: Option<String>,
     line_number: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EntryDiagnosticKind {
+    UnknownOption { option: String },
+    ConflictingOptions { left: String, right: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EntryDiagnostic {
+    line_number: usize,
+    line: String,
+    kind: EntryDiagnosticKind,
 }
 
 impl PathEntry {
@@ -53,9 +63,6 @@ impl PathEntry {
             auto_mode: AutosetMode::Auto,
             placement_mode: PlacementMode::Postfix,
             protection_mode: ProtectionMode::Unprotected,
-            invalid_option: None,
-            conflicting_options: None,
-            original_options: None,
             line_number: 0,
         }
     }
@@ -88,12 +95,6 @@ impl PathEntry {
     // Preserve source line-number metadata for diagnostics.
     fn with_line_number(mut self, line_number: usize) -> Self {
         self.line_number = line_number;
-        self
-    }
-
-    // Preserve the raw options token for unknown/conflicting-option round-trip output.
-    fn with_original_options(mut self, options_token: impl Into<String>) -> Self {
-        self.original_options = Some(options_token.into());
         self
     }
 }
@@ -446,7 +447,10 @@ fn malformed_nameless_entry(location: &str, line_number: usize) -> PathEntry {
     PathEntry::new(strip_trailing_slash(location), String::new()).with_line_number(line_number)
 }
 
-fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
+fn parse_entry_line_with_diagnostic(
+    line: &str,
+    line_number: usize,
+) -> Option<(PathEntry, Option<EntryDiagnostic>)> {
     let trimmed = line.trim();
 
     if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -455,28 +459,29 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
 
     let parts = split_store_fields(line);
 
-    let entry = match parts.as_slice() {
+    let parsed = match parts.as_slice() {
         [location, name] => {
             let parsed_location = strip_single_quotes(location);
             let parsed_name = parse_name_field(name);
             match (parsed_location, parsed_name) {
-                (Some(location), Some(name)) => {
+                (Some(location), Some(name)) => (
                     PathEntry::new(strip_trailing_slash(location), name)
-                        .with_line_number(line_number)
-                }
+                        .with_line_number(line_number),
+                    None,
+                ),
                 (None, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
                         line_number
                     );
-                    malformed_nameless_entry(location, line_number)
+                    (malformed_nameless_entry(location, line_number), None)
                 }
                 (_, None) => {
                     eprintln!(
                         "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
                         line_number
                     );
-                    malformed_nameless_entry(location, line_number)
+                    (malformed_nameless_entry(location, line_number), None)
                 }
             }
         }
@@ -496,46 +501,51 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         invalid_option,
                     },
                 ) => {
-                    let mut entry = PathEntry::new(strip_trailing_slash(location), name)
+                    let entry = PathEntry::new(strip_trailing_slash(location), name)
                         .with_options(auto_mode, placement_mode, protection_mode)
                         .with_line_number(line_number);
-                    entry.invalid_option = invalid_option;
-                    if entry.invalid_option.is_some() {
-                        entry = entry.with_original_options(options.as_str());
-                    }
-                    entry
+
+                    let diagnostic = invalid_option.map(|option| EntryDiagnostic {
+                        line_number,
+                        line: line.to_string(),
+                        kind: EntryDiagnosticKind::UnknownOption { option },
+                    });
+
+                    (entry, diagnostic)
                 }
                 (
                     Some(location),
                     Some(name),
                     EntryOptionsParseResult::Conflicting { left, right },
-                ) => {
-                    let mut entry = PathEntry::new(strip_trailing_slash(location), name)
-                        .with_line_number(line_number)
-                        .with_original_options(options.as_str());
-                    entry.conflicting_options = Some((left, right));
-                    entry
-                }
+                ) => (
+                    PathEntry::new(strip_trailing_slash(location), name)
+                        .with_line_number(line_number),
+                    Some(EntryDiagnostic {
+                        line_number,
+                        line: line.to_string(),
+                        kind: EntryDiagnosticKind::ConflictingOptions { left, right },
+                    }),
+                ),
                 (None, _, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
                         line_number
                     );
-                    malformed_nameless_entry(location, line_number)
+                    (malformed_nameless_entry(location, line_number), None)
                 }
                 (_, None, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
                         line_number
                     );
-                    malformed_nameless_entry(location, line_number)
+                    (malformed_nameless_entry(location, line_number), None)
                 }
                 (_, _, EntryOptionsParseResult::Malformed) => {
                     eprintln!(
                         "warning: malformed entry at line {}: options must be wrapped in '(' and ')'",
                         line_number
                     );
-                    malformed_nameless_entry(location, line_number)
+                    (malformed_nameless_entry(location, line_number), None)
                 }
             }
         }
@@ -544,33 +554,27 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                 "warning: malformed entry at line {}: missing required name field",
                 line_number
             );
-            malformed_nameless_entry(location, line_number)
+            (malformed_nameless_entry(location, line_number), None)
         }
         _ => {
             eprintln!(
                 "warning: malformed entry at line {}: expected '<location>' [<name>] (<options>) (or omit options to default to auto/post)",
                 line_number
             );
-            malformed_nameless_entry(trimmed, line_number)
+            (malformed_nameless_entry(trimmed, line_number), None)
         }
     };
 
-    Some(entry)
+    Some(parsed)
+}
+
+#[cfg(test)]
+fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
+    parse_entry_line_with_diagnostic(line, line_number).map(|(entry, _)| entry)
 }
 
 /// Serialize an entry back into a line.
 fn format_entry_line(entry: &PathEntry) -> String {
-    if entry.invalid_option.is_some() || entry.conflicting_options.is_some() {
-        if let Some(options_token) = entry.original_options.as_deref() {
-            return format!(
-                "{} [{}] {}",
-                quote_store_location_field(&entry.location),
-                entry.name,
-                options_token
-            );
-        }
-    }
-
     format!(
         "{} [{}] ({})",
         quote_store_location_field(&entry.location),
@@ -579,23 +583,39 @@ fn format_entry_line(entry: &PathEntry) -> String {
     )
 }
 
-/// Load entries from the store file; if the file doesn't exist return an empty
-/// vector.
-fn load_entries(store_file: &Path) -> io::Result<Vec<PathEntry>> {
+#[derive(Debug, Default)]
+struct LoadedEntries {
+    entries: Vec<PathEntry>,
+    diagnostics: Vec<EntryDiagnostic>,
+}
+
+/// Load entries and parser diagnostics from the store file.
+fn load_entries_with_diagnostics(store_file: &Path) -> io::Result<LoadedEntries> {
     if !store_file.exists() {
-        return Ok(Vec::new());
+        return Ok(LoadedEntries::default());
     }
 
     let file = fs::File::open(store_file)?;
     let reader = io::BufReader::new(file);
-    let mut entries = Vec::new();
+    let mut loaded = LoadedEntries::default();
+
     for (index, line) in reader.lines().enumerate() {
         let line = line?;
-        if let Some(e) = parse_entry_line(&line, index + 1) {
-            entries.push(e);
+        if let Some((entry, diagnostic)) = parse_entry_line_with_diagnostic(&line, index + 1) {
+            loaded.entries.push(entry);
+            if let Some(diagnostic) = diagnostic {
+                loaded.diagnostics.push(diagnostic);
+            }
         }
     }
-    Ok(entries)
+
+    Ok(loaded)
+}
+
+/// Load entries from the store file; if the file doesn't exist return an empty
+/// vector.
+fn load_entries(store_file: &Path) -> io::Result<Vec<PathEntry>> {
+    Ok(load_entries_with_diagnostics(store_file)?.entries)
 }
 
 /// Load entries or print an error and terminate.
@@ -637,56 +657,68 @@ fn save_entries(store_file: &Path, entries: &[PathEntry]) -> io::Result<()> {
     fs::write(store_file, data)
 }
 
-fn report_invalid_option(level: &str, store_file: &Path, entry: &PathEntry) {
-    let invalid_option = entry.invalid_option.as_deref().unwrap_or("<unknown>");
+fn report_invalid_option(level: &str, store_file: &Path, diagnostic: &EntryDiagnostic) {
+    let invalid_option = match &diagnostic.kind {
+        EntryDiagnosticKind::UnknownOption { option } => option.as_str(),
+        _ => "<unknown>",
+    };
     eprintln!(
         "{}: unknown entry option '{}' at line {} in {}",
         level,
         invalid_option,
-        entry.line_number,
+        diagnostic.line_number,
         store_file.display()
     );
-    eprintln!("{}: {}", level, format_entry_line(entry));
+    eprintln!("{}: {}", level, diagnostic.line);
 }
 
-fn report_conflicting_options(store_file: &Path, entry: &PathEntry) {
-    let (left, right) = entry
-        .conflicting_options
-        .as_ref()
-        .map(|(left, right)| (left.as_str(), right.as_str()))
-        .unwrap_or(("<unknown>", "<unknown>"));
+fn report_conflicting_options(store_file: &Path, diagnostic: &EntryDiagnostic) {
+    let (left, right) = match &diagnostic.kind {
+        EntryDiagnosticKind::ConflictingOptions { left, right } => (left.as_str(), right.as_str()),
+        _ => ("<unknown>", "<unknown>"),
+    };
     eprintln!(
         "error: conflicting entry options '{}' and '{}' at line {} in {}",
         left,
         right,
-        entry.line_number,
+        diagnostic.line_number,
         store_file.display()
     );
-    eprintln!("error: {}", format_entry_line(entry));
+    eprintln!("error: {}", diagnostic.line);
 }
 
 /// Check the existing entries, reporting any whose `location` does not
 /// currently exist. Nameless/duplicate names are fatal errors; missing
 /// locations are warnings only. Unknown option handling is controlled by the
 /// caller.
-fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry], fail_on_invalid_option: bool) {
-    let conflicting_entries: Vec<_> = entries
+fn validate_loaded_entries(
+    store_file: &Path,
+    entries: &[PathEntry],
+    diagnostics: &[EntryDiagnostic],
+    fail_on_invalid_option: bool,
+) {
+    let conflicting_entries: Vec<_> = diagnostics
         .iter()
-        .filter(|entry| entry.conflicting_options.is_some())
+        .filter(|diagnostic| {
+            matches!(
+                diagnostic.kind,
+                EntryDiagnosticKind::ConflictingOptions { .. }
+            )
+        })
         .collect();
     if !conflicting_entries.is_empty() {
-        for entry in conflicting_entries {
-            report_conflicting_options(store_file, entry);
+        for diagnostic in conflicting_entries {
+            report_conflicting_options(store_file, diagnostic);
         }
         std::process::exit(1);
     }
 
-    let mut invalid_entries = entries
+    let mut invalid_entries = diagnostics
         .iter()
-        .filter(|entry| entry.invalid_option.is_some())
+        .filter(|diagnostic| matches!(diagnostic.kind, EntryDiagnosticKind::UnknownOption { .. }))
         .peekable();
     if invalid_entries.peek().is_some() {
-        for entry in invalid_entries {
+        for diagnostic in invalid_entries {
             report_invalid_option(
                 if fail_on_invalid_option {
                     "error"
@@ -694,7 +726,7 @@ fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry], fail_on_inv
                     "warning"
                 },
                 store_file,
-                entry,
+                diagnostic,
             );
         }
 
@@ -817,8 +849,8 @@ fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry], fail_on_inv
 ///
 /// Returns an I/O error only if loading entries fails.
 fn validate_entries(store_file: &Path) -> io::Result<()> {
-    let entries = load_entries(store_file)?;
-    validate_loaded_entries(store_file, &entries, false);
+    let loaded = load_entries_with_diagnostics(store_file)?;
+    validate_loaded_entries(store_file, &loaded.entries, &loaded.diagnostics, false);
     Ok(())
 }
 
@@ -1504,14 +1536,20 @@ fn handle_verify(store_file: &Path) {
         std::process::exit(1);
     }
 
-    let entries = load_entries_or_exit(store_file);
+    let loaded = match load_entries_with_diagnostics(store_file) {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            eprintln!("error: failed to load entries: {}", error);
+            std::process::exit(1);
+        }
+    };
 
-    if entries.is_empty() {
+    if loaded.entries.is_empty() {
         eprintln!("error: store file has no entries: {}", store_file.display());
         std::process::exit(1);
     }
 
-    validate_loaded_entries(store_file, &entries, true);
+    validate_loaded_entries(store_file, &loaded.entries, &loaded.diagnostics, true);
     println!("Path file is valid.");
 }
 
@@ -1672,9 +1710,6 @@ mod tests {
         assert_eq!(entry.auto_mode, AutosetMode::Auto);
         assert_eq!(entry.placement_mode, PlacementMode::Postfix);
         assert_eq!(entry.protection_mode, ProtectionMode::Unprotected);
-        assert!(entry.invalid_option.is_none());
-        assert!(entry.conflicting_options.is_none());
-        assert!(entry.original_options.is_none());
         assert_eq!(entry.line_number, 0);
     }
 
@@ -1692,9 +1727,6 @@ mod tests {
         assert!(!entry.autoset_enabled());
         assert!(entry.prepends_path());
         assert!(entry.is_protected());
-        assert!(entry.invalid_option.is_none());
-        assert!(entry.conflicting_options.is_none());
-        assert!(entry.original_options.is_none());
         assert_eq!(entry.line_number, 0);
     }
 
@@ -1708,24 +1740,48 @@ mod tests {
         assert!(entry.autoset_enabled());
         assert!(!entry.prepends_path());
         assert!(!entry.is_protected());
-        assert!(entry.original_options.is_none());
         assert_eq!(entry.line_number, 4);
     }
 
     #[test]
-    /// Ensure `with_original_options` stores the raw options token for round-trip output.
-    fn path_entry_with_original_options_preserves_raw_token() {
-        let entry = PathEntry::new("/tmp/tools", "tools")
-            .with_options(
-                AutosetMode::NoAuto,
-                PlacementMode::Prefix,
-                ProtectionMode::Protected,
-            )
-            .with_original_options("(noauto,pre,protect,postfix)");
+    /// Ensure unknown options are reported as diagnostics separate from `PathEntry`.
+    fn parse_entry_line_reports_unknown_option_diagnostic() {
+        let line = "'/tmp/tools' [tools] (noauto,pre,protect,postfix)";
+        let (entry, diagnostic) = parse_entry_line_with_diagnostic(line, 2).unwrap();
 
+        assert_eq!(entry.name, "tools");
+        assert!(!entry.autoset_enabled());
+        assert!(entry.prepends_path());
+        assert!(entry.is_protected());
+
+        let diagnostic = diagnostic.expect("expected unknown option diagnostic");
+        assert_eq!(diagnostic.line_number, 2);
+        assert_eq!(diagnostic.line, line);
         assert_eq!(
-            entry.original_options.as_deref(),
-            Some("(noauto,pre,protect,postfix)")
+            diagnostic.kind,
+            EntryDiagnosticKind::UnknownOption {
+                option: "postfix".to_string()
+            }
+        );
+    }
+
+    #[test]
+    /// Ensure mutually-exclusive options are reported as diagnostics.
+    fn parse_entry_line_reports_conflicting_options_diagnostic() {
+        let line = "'/tmp/tools' [tools] (auto,noauto)";
+        let (entry, diagnostic) = parse_entry_line_with_diagnostic(line, 9).unwrap();
+
+        assert_eq!(entry.name, "tools");
+
+        let diagnostic = diagnostic.expect("expected conflicting options diagnostic");
+        assert_eq!(diagnostic.line_number, 9);
+        assert_eq!(diagnostic.line, line);
+        assert_eq!(
+            diagnostic.kind,
+            EntryDiagnosticKind::ConflictingOptions {
+                left: "auto".to_string(),
+                right: "noauto".to_string(),
+            }
         );
     }
 
@@ -1955,7 +2011,6 @@ mod tests {
             entry.auto_mode == AutosetMode::Auto
                 && entry.placement_mode == PlacementMode::Postfix
                 && entry.protection_mode == ProtectionMode::Protected
-                && entry.invalid_option.is_none()
         }));
 
         let extras = known_extra_paths();
@@ -1963,7 +2018,6 @@ mod tests {
             entry.auto_mode == AutosetMode::Auto
                 && entry.placement_mode == PlacementMode::Postfix
                 && entry.protection_mode == ProtectionMode::Unprotected
-                && entry.invalid_option.is_none()
         }));
     }
 
@@ -2023,9 +2077,6 @@ mod tests {
             auto_mode: AutosetMode::Auto,
             placement_mode: PlacementMode::Postfix,
             protection_mode: ProtectionMode::Protected,
-            invalid_option: None,
-            conflicting_options: None,
-            original_options: None,
             line_number: 1,
         }];
 
@@ -2129,17 +2180,23 @@ mod tests {
     /// recognized options still take effect.
     fn parse_entry_line_postfix_option_preserves_valid_options() {
         let line = "'/tmp/tools' [tools] (noauto,pre,protect,postfix)";
-        let entry = parse_entry_line(line, 2).unwrap();
+        let (entry, diagnostic) = parse_entry_line_with_diagnostic(line, 2).unwrap();
         assert_eq!(entry.name, "tools");
         assert!(!entry.autoset_enabled());
         assert!(entry.prepends_path());
         assert!(entry.is_protected());
-        assert_eq!(entry.invalid_option.as_deref(), Some("postfix"));
+
+        let diagnostic = diagnostic.expect("expected unknown option diagnostic");
         assert_eq!(
-            entry.original_options.as_deref(),
-            Some("(noauto,pre,protect,postfix)")
+            diagnostic.kind,
+            EntryDiagnosticKind::UnknownOption {
+                option: "postfix".to_string()
+            }
         );
-        assert_eq!(format_entry_line(&entry), line);
+        assert_eq!(
+            format_entry_line(&entry),
+            "'/tmp/tools' [tools] (noauto,pre,protect)"
+        );
     }
 
     #[test]
