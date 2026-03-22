@@ -12,7 +12,6 @@ use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 
-/// Simple representation of a stored path entry in plain text form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AutosetMode {
     Auto,
@@ -31,6 +30,7 @@ enum ProtectionMode {
     Unprotected,
 }
 
+/// Simple representation of a stored path entry in plain text form.
 #[derive(Debug, Clone)]
 struct PathEntry {
     location: String,
@@ -91,7 +91,7 @@ impl PathEntry {
         self
     }
 
-    // Preserve the raw options token for unknown-option round-trip output.
+    // Preserve the raw options token for unknown/conflicting-option round-trip output.
     fn with_original_options(mut self, options_token: impl Into<String>) -> Self {
         self.original_options = Some(options_token.into());
         self
