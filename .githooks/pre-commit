@@ -4,19 +4,20 @@
 #   git config core.hooksPath .githooks
 
 echo "Running cargo fmt..."
+# Capture staged Rust files before formatting so we only re-stage those files,
+# not unrelated modified Rust files that were not part of this commit.
+staged_rust_files="$(git diff --cached --name-only -- '*.rs')"
 cargo fmt -- || {
     echo "cargo fmt failed; please ensure rustfmt is installed" >&2
     exit 1
 }
 
-# Stage only modified Rust sources so unrelated files are not pulled into
-# the commit by this hook.
-rust_changed_files="$(git ls-files -m -- '*.rs')"
-if [ -n "$rust_changed_files" ]; then
+# Re-stage only the Rust files that were already staged before formatting.
+if [ -n "$staged_rust_files" ]; then
     while IFS= read -r file; do
         [ -n "$file" ] && git add -- "$file"
     done <<EOF
-$rust_changed_files
+$staged_rust_files
 EOF
 fi
 
