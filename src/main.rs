@@ -538,12 +538,12 @@ fn report_invalid_option(level: &str, store_file: &Path, entry: &PathEntry) {
 /// locations are warnings only. Unknown option handling is controlled by the
 /// caller.
 fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry], fail_on_invalid_option: bool) {
-    let invalid_entries: Vec<&PathEntry> = entries
+    let mut invalid_entries = entries
         .iter()
         .filter(|entry| entry.invalid_option.is_some())
-        .collect();
-    if !invalid_entries.is_empty() {
-        for entry in &invalid_entries {
+        .peekable();
+    if invalid_entries.peek().is_some() {
+        for entry in invalid_entries {
             report_invalid_option(
                 if fail_on_invalid_option {
                     "error"
