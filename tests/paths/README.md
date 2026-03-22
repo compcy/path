@@ -88,7 +88,7 @@ and the `cases` list in `list_rejects_delimiter_malicious_cases` in
    ```
    '<location>' [<name>] (<options>)
    ```
-3. Update tests to use `write_fixture_to_store(dir, "fixture_name")` instead of inline `fs::write`
+3. Update tests to use `copy_fixture_to_temp_store(dir, "fixture_name")` instead of inline `fs::write`
 4. Update this README with the new fixture name and purpose
 
 ## Example Test Usage
@@ -100,7 +100,7 @@ fn my_test() {
     let dir = temp.path();
 
     // Load the fixture instead of writing inline
-    write_fixture_to_store(dir, "protected_entry").unwrap();
+    copy_fixture_to_temp_store(dir, "protected_entry").unwrap();
 
     // Now run test with the fixture data
     let mut cmd = test_cmd(dir, "");
