@@ -74,38 +74,44 @@ fn find_system_path_by_location(location: &str) -> Option<&'static PathEntry> {
 /// Known non-system tool paths recognised for display by `list --pretty`.
 ///
 /// These entries are unprotected and are not managed by `path restore`. The
-/// `$HOME`-relative entries are expanded from the current environment at call
-/// time, so no caching is performed.
-fn known_extra_paths() -> Vec<PathEntry> {
-    let mut entries = vec![
-        builtin_path_entry("/opt/homebrew/bin", "homebrewbin", false, false),
-        builtin_path_entry("/opt/homebrew/sbin", "homebrewsbin", false, false),
-    ];
+/// `$HOME`-relative entries are expanded from the current environment at first call,
+/// then cached for efficient reuse across path segment processing.
+fn known_extra_paths() -> &'static [PathEntry] {
+    static EXTRA_PATHS: OnceLock<Vec<PathEntry>> = OnceLock::new();
+    EXTRA_PATHS
+        .get_or_init(|| {
+            let mut entries = vec![
+                builtin_path_entry("/opt/homebrew/bin", "homebrewbin", false, false),
+                builtin_path_entry("/opt/homebrew/sbin", "homebrewsbin", false, false),
+            ];
 
-    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
-        let home_str = strip_trailing_slash(&home.to_string_lossy());
-        entries.push(builtin_path_entry(
-            &format!("{}/.cargo/bin", home_str),
-            "cargo",
-            false,
-            false,
-        ));
-        entries.push(builtin_path_entry(
-            &format!("{}/.local/bin", home_str),
-            "pipx",
-            false,
-            false,
-        ));
-    }
+            if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+                let home_str = strip_trailing_slash(&home.to_string_lossy());
+                entries.push(builtin_path_entry(
+                    &format!("{}/.cargo/bin", home_str),
+                    "cargo",
+                    false,
+                    false,
+                ));
+                entries.push(builtin_path_entry(
+                    &format!("{}/.local/bin", home_str),
+                    "pipx",
+                    false,
+                    false,
+                ));
+            }
 
-    entries
+            entries
+        })
+        .as_slice()
 }
 
 /// Return the known extra path entry matching a location, if any.
 fn find_extra_path_by_location(location: &str) -> Option<PathEntry> {
     known_extra_paths()
-        .into_iter()
+        .iter()
         .find(|entry| strip_trailing_slash(&entry.location) == strip_trailing_slash(location))
+        .cloned()
 }
 
 /// Return `true` if any name appears in both `PathEntry` slices.
@@ -132,8 +138,8 @@ fn path_entries_have_unique_names(entries: &[PathEntry]) -> bool {
 fn builtins_have_unique_names() -> bool {
     let extra_paths = known_extra_paths();
     path_entries_have_unique_names(standard_system_paths())
-        && path_entries_have_unique_names(&extra_paths)
-        && !path_entry_name_overlap(standard_system_paths(), &extra_paths)
+        && path_entries_have_unique_names(extra_paths)
+        && !path_entry_name_overlap(standard_system_paths(), extra_paths)
 }
 
 /// Return the default store file path.
