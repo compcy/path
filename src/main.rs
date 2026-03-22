@@ -25,21 +25,43 @@ struct PathEntry {
     line_number: usize,
 }
 
+impl PathEntry {
+    // Create an entry with the default option and metadata state.
+    fn new(location: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            location: location.into(),
+            name: name.into(),
+            autoset: true,
+            prepend: false,
+            protect: false,
+            invalid_option: None,
+            source_line: String::new(),
+            line_number: 0,
+        }
+    }
+
+    // Apply parsed or CLI-provided option flags without touching metadata.
+    fn with_options(mut self, autoset: bool, prepend: bool, protect: bool) -> Self {
+        self.autoset = autoset;
+        self.prepend = prepend;
+        self.protect = protect;
+        self
+    }
+
+    // Preserve the original line text and its line number for diagnostics.
+    fn with_source(mut self, source_line: impl Into<String>, line_number: usize) -> Self {
+        self.source_line = source_line.into();
+        self.line_number = line_number;
+        self
+    }
+}
+
 const DEFAULT_STORE_FILE_NAME: &str = ".path";
 const STORE_FILE_LAYOUT_COMMENT: &str = "# layout: '<location>' [<name>] (<options>)";
 
 /// Build a built-in path entry as a `PathEntry`.
 fn builtin_path_entry(location: &str, name: &str, prepend: bool, protect: bool) -> PathEntry {
-    PathEntry {
-        location: location.to_string(),
-        name: name.to_string(),
-        autoset: true,
-        prepend,
-        protect,
-        invalid_option: None,
-        source_line: String::new(),
-        line_number: 0,
-    }
+    PathEntry::new(location, name).with_options(true, prepend, protect)
 }
 
 /// Standard system paths managed by `path restore`.
@@ -311,16 +333,8 @@ fn quote_store_location_field(field: &str) -> String {
 
 /// Build a malformed nameless entry with default option values.
 fn malformed_nameless_entry(location: &str, line_number: usize) -> PathEntry {
-    PathEntry {
-        location: strip_trailing_slash(location),
-        name: String::new(),
-        autoset: true,
-        prepend: false,
-        protect: false,
-        invalid_option: None,
-        source_line: String::new(),
-        line_number,
-    }
+    PathEntry::new(strip_trailing_slash(location), String::new())
+        .with_source(String::new(), line_number)
 }
 
 fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
@@ -337,16 +351,10 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
             let parsed_location = strip_single_quotes(location);
             let parsed_name = parse_name_field(name);
             match (parsed_location, parsed_name) {
-                (Some(location), Some(name)) => PathEntry {
-                    location: strip_trailing_slash(location),
-                    name,
-                    autoset: true,
-                    prepend: false,
-                    protect: false,
-                    invalid_option: None,
-                    source_line: line.to_string(),
-                    line_number,
-                },
+                (Some(location), Some(name)) => {
+                    PathEntry::new(strip_trailing_slash(location), name)
+                        .with_source(line, line_number)
+                }
                 (None, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
@@ -378,16 +386,13 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                         protect,
                         invalid_option,
                     },
-                ) => PathEntry {
-                    location: strip_trailing_slash(location),
-                    name,
-                    autoset,
-                    prepend,
-                    protect,
-                    invalid_option,
-                    source_line: line.to_string(),
-                    line_number,
-                },
+                ) => {
+                    let mut entry = PathEntry::new(strip_trailing_slash(location), name)
+                        .with_options(autoset, prepend, protect)
+                        .with_source(line, line_number);
+                    entry.invalid_option = invalid_option;
+                    entry
+                }
                 (None, _, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
@@ -1048,16 +1053,9 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
                 std::process::exit(1);
             }
 
-            entries.push(PathEntry {
-                location: location.clone(),
-                name,
-                autoset,
-                prepend,
-                protect,
-                invalid_option: None,
-                source_line: String::new(),
-                line_number: 0,
-            });
+            entries.push(
+                PathEntry::new(location.clone(), name).with_options(autoset, prepend, protect),
+            );
 
             if let Err(error) = save_entries(store_file, &entries) {
                 eprintln!("warning: failed to update store file: {}", error);
@@ -1468,16 +1466,52 @@ mod tests {
 
     /// Helper to construct a test entry with sensible defaults.
     fn test_entry(location: &str, name: &str) -> PathEntry {
-        PathEntry {
-            location: location.to_string(),
-            name: name.to_string(),
-            autoset: true,
-            prepend: false,
-            protect: false,
-            invalid_option: None,
-            source_line: String::new(),
-            line_number: 0,
-        }
+        PathEntry::new(location, name)
+    }
+
+    #[test]
+    /// Ensure `PathEntry::new` applies the standard default option state.
+    fn path_entry_new_uses_default_values() {
+        let entry = PathEntry::new("/tmp/tools", "tools");
+
+        assert_eq!(entry.location, "/tmp/tools");
+        assert_eq!(entry.name, "tools");
+        assert!(entry.autoset);
+        assert!(!entry.prepend);
+        assert!(!entry.protect);
+        assert!(entry.invalid_option.is_none());
+        assert!(entry.source_line.is_empty());
+        assert_eq!(entry.line_number, 0);
+    }
+
+    #[test]
+    /// Ensure `with_options` updates only the explicit option flags.
+    fn path_entry_with_options_updates_option_flags() {
+        let entry = PathEntry::new("/tmp/tools", "tools").with_options(false, true, true);
+
+        assert_eq!(entry.location, "/tmp/tools");
+        assert_eq!(entry.name, "tools");
+        assert!(!entry.autoset);
+        assert!(entry.prepend);
+        assert!(entry.protect);
+        assert!(entry.invalid_option.is_none());
+        assert!(entry.source_line.is_empty());
+        assert_eq!(entry.line_number, 0);
+    }
+
+    #[test]
+    /// Ensure `with_source` records the original store line and line number.
+    fn path_entry_with_source_updates_source_metadata() {
+        let entry =
+            PathEntry::new("/tmp/tools", "tools").with_source("'/tmp/tools' [tools] (auto)", 4);
+
+        assert_eq!(entry.location, "/tmp/tools");
+        assert_eq!(entry.name, "tools");
+        assert!(entry.autoset);
+        assert!(!entry.prepend);
+        assert!(!entry.protect);
+        assert_eq!(entry.source_line, "'/tmp/tools' [tools] (auto)");
+        assert_eq!(entry.line_number, 4);
     }
 
     #[test]
