@@ -1,0 +1,3 @@
+# layout: '<location>' [<name>] (<options>)
+'/bin' [custombin] (auto)
+'/usr/bin' [customusrbin] (noauto)

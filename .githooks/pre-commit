@@ -4,18 +4,66 @@
 #   git config core.hooksPath .githooks
 
 echo "Running cargo fmt..."
-# auto-format and re-add any modified files so the commit will include them
+# Capture staged Rust files before formatting so we only re-stage those files,
+# not unrelated modified Rust files that were not part of this commit.
+staged_rust_files="$(git diff --cached --name-only -- '*.rs')"
 cargo fmt -- || {
     echo "cargo fmt failed; please ensure rustfmt is installed" >&2
     exit 1
 }
-# ensure there are no unstaged changes (e.g., from cargo fmt) before committing
-UNSTAGED_FMT_CHANGES="$(git diff --name-only)"
-if [ -n "$UNSTAGED_FMT_CHANGES" ]; then
-    echo "cargo fmt modified the following files. Please review and stage the changes before committing:" >&2
-    echo "$UNSTAGED_FMT_CHANGES" >&2
-    echo "Aborting commit." >&2
-    exit 1
+
+# Re-stage only the Rust files that were already staged before formatting.
+if [ -n "$staged_rust_files" ]; then
+    while IFS= read -r file; do
+        [ -n "$file" ] && git add -- "$file"
+    done <<EOF
+$staged_rust_files
+EOF
+fi
+
+echo "Running Markdown format/lint..."
+staged_markdown_files="$(git diff --cached --name-only -- '*.md')"
+if [ -n "$staged_markdown_files" ]; then
+    # Format staged Markdown files if prettier is available.
+    if command -v prettier >/dev/null 2>&1; then
+        while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            prettier --write "$file" || {
+                echo "prettier failed on $file" >&2
+                exit 1
+            }
+            git add -- "$file"
+        done <<EOF
+$staged_markdown_files
+EOF
+    else
+        echo "warning: prettier not found; skipping Markdown formatting" >&2
+    fi
+
+    # Lint staged Markdown files.
+    if command -v markdownlint >/dev/null 2>&1; then
+        while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            markdownlint "$file" || {
+                echo "markdownlint found issues in $file" >&2
+                exit 1
+            }
+        done <<EOF
+$staged_markdown_files
+EOF
+    elif command -v markdownlint-cli2 >/dev/null 2>&1; then
+        while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            markdownlint-cli2 "$file" || {
+                echo "markdownlint-cli2 found issues in $file" >&2
+                exit 1
+            }
+        done <<EOF
+$staged_markdown_files
+EOF
+    else
+        echo "warning: markdownlint not found; skipping Markdown lint" >&2
+    fi
 fi
 
 echo "Running cargo clippy..."

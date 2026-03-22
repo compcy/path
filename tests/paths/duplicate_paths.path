@@ -1,0 +1,4 @@
+# layout: '<location>' [<name>] (<options>)
+'/foo/a' [first] (auto)
+'/foo/a/' [second] (auto)
+'/foo/b' [unique] (auto)

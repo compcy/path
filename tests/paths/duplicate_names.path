@@ -1,0 +1,4 @@
+# layout: '<location>' [<name>] (<options>)
+'/foo/a' [dup] (auto)
+'/foo/b' [dup] (auto)
+'/foo/c' [unique] (auto)

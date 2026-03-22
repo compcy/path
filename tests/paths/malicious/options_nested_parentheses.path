@@ -1,0 +1,2 @@
+# layout: '<location>' [<name>] (<options>)
+'/tmp/safe' [safe] (auto,(pre))

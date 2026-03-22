@@ -3,14 +3,14 @@
 `path` is a simple command-line utility for inspecting and manipulating the
 `PATH` environment variable. It also keeps a local record of added entries in
 a plain-text store file (default: `$HOME/.path`), with optional names and
-autoset flags.
+autoset and protection flags.
 
 Because a child process cannot directly modify its parent shell environment,
 commands that compute PATH output a shell assignment like
 `export PATH='...new value...'`.
 
 For a persistent setup, source the wrapper script from your shell rc file
-(`~/.zshrc`, `~/.bashrc`, etc.). 
+(`~/.zshrc`, `~/.bashrc`, etc.).
 
 ```sh
 # ~/.zshrc (or ~/.bashrc)
@@ -68,7 +68,7 @@ path add /some/dir mydir
 Global option:
 
 - `--file <path>` — use a specific store file instead of the default `$HOME/.path`.
-- `-f` is intentionally not available (reserved for a future `--force` option).
+- `-f` is not a global option; it is only valid as `path remove -f ...`.
 
 ### Commands
 
@@ -83,33 +83,64 @@ Global option:
   - Trailing `/` is stripped from path arguments (except `/` itself).
   - If the path exists, it must be a directory (files are rejected).
   - If `name` is provided, it must be alphanumeric and unique.
+  - Built-in system-path names are reserved and cannot be used for stored entries: `sysbin`, `syssbin`, `usrbin`, `usrsbin`, `usrlocalbin`, `usrlocalsbin`.
   - Use `--noauto` to store a named entry that should not be included by `path load`.
+  - Use `--protect` to store a named entry that `path remove` must not remove by name or by direct path.
   - Only entries with an explicit `name` are written to the configured store file.
   - Existing PATH entries are not duplicated for equivalent trailing-slash forms (for example `/usr/local/bin` and `/usr/local/bin/`).
 - `path add --pre <location-or-name> [name]` — prepend instead of append
   - When `name` is provided, the stored entry records `pre` in its options so `path load` will prepend it in future shells.
 - `path remove <location-or-name>` — remove from PATH only
   - If the argument matches a stored short name, its location is removed from PATH.
+  - Stored entries marked `protect` fail instead of being removed, whether addressed by stored name or direct path.
+  - Built-in protected system paths also fail instead of being removed, whether addressed by reserved name (`sysbin`, `syssbin`, `usrbin`, `usrsbin`, `usrlocalbin`, `usrlocalsbin`) or by direct path.
+  - Use `--force` (or `-f`) to remove protected store entries or protected built-in system paths from the current PATH output.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`).
   - This command does not modify `.path`.
 - `path delete <location-or-name>` — delete from the configured store file only
   - If the argument matches a stored short name, that entry is deleted.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`), and matching stored locations are deleted.
 - `path list` — show all saved entries from the configured store file
+- `path list --pretty` — display the current PATH as a formatted table
+  - Each segment of the active PATH is printed on its own line.
+  - Column 1 (`#`): 1-based row number.
+  - Column 2 (`PATH`): the directory path.
+  - Column 3 (`TYPE`): `system` for built-in system paths, `known` for known extra paths, blank for others.
+  - Column 4 (`NAME`): resolved first from the store file, then from the built-in system/known path lists; blank when no name is known.
+  - Protected entries show `[protected]` in the `TYPE` column.
+  - Column widths are fitted to the widest value in each column.
+
+  ```
+  #  PATH                TYPE                NAME
+  -  ------------------  ------------------  -----------
+  1  /usr/local/bin      system [protected]  usrlocalbin
+  2  /usr/bin            system [protected]  usrbin
+  3  /bin                system [protected]  sysbin
+  4  /home/user/mytools
+  ```
+
 - `path load` — apply all stored entries marked `auto` to PATH
   - Entries with option `pre` are prepended.
   - Entries without `pre` are appended (post behavior by default).
+  - Unknown alphabetic option tokens produce a warning that includes the line number, the original line, and the unknown option; recognized options on that same line still take effect.
   - This runs automatically when `path-wrapper.sh` is sourced (for example at shell startup from your rc file).
 - `path verify` — validate configured store entries and print `Path file is valid.` when validation passes
   - If the configured store file does not exist or has no entries, it fails.
+  - Unknown alphabetic option tokens are reported with the line number, the original line, and the unknown option, and `path verify` exits non-zero.
   - On validation failure, it prints the failure details and exits non-zero.
+- `path restore` — restore a built-in set of protected system paths into PATH without persisting them
+  - Restores: `/bin` (`sysbin`), `/sbin` (`syssbin`), `/usr/bin` (`usrbin`), `/usr/sbin` (`usrsbin`), `/usr/local/bin` (`usrlocalbin`), `/usr/local/sbin` (`usrlocalsbin`).
+  - Missing system paths are appended to the current PATH in that order.
 
 **Startup validation note:** when reading `.path`, the tool aborts if it finds:
+
 - a nameless entry,
 - a relative or non-canonical-looking stored location,
 - a stored location containing `:`,
 - a non-alphanumeric name,
 - duplicate names.
+
+Unknown alphabetic option tokens are warnings during normal store loading, but they are fatal under `path verify`.
 
 Missing filesystem locations only produce warnings (they are not auto-removed).
 
@@ -120,13 +151,18 @@ path add /usr/local/bin             # append only; not stored (no explicit name)
 path add /home/$USER/.bin home      # store with short name "home"
 path add "./my tools" mytools       # path contains a space
 path add /opt/internal/bin internal --noauto  # store but do not include in `path load`
+path add /opt/locked/bin locked --protect      # store and prevent `path remove locked`
 path add --pre /opt/custom/bin      # prepend to PATH instead of append
 path add home                        # uses stored name "home" if present
 path remove /home/$USER/.bin         # remove by path
 path remove home                     # remove from PATH by stored short name
+path remove --force locked           # force-remove a protected stored entry from PATH
+path remove -f /bin                  # force-remove a protected built-in system path
 path delete home                     # delete stored entry from .path by name
 path load                            # add only entries marked auto (usually automatic at shell startup)
 path verify                          # validate .path contents and report status
+path restore                         # restore built-in protected system paths to PATH
+path list --pretty                   # show current PATH as a table with index, type, and names
 
 # invalid unless "foo" is a stored name
 path add foo
@@ -138,8 +174,9 @@ path add .path
 Entries are persisted to `$HOME/.path` by default (or the file passed with
 `--file`), but only for entries where you supplied an explicit name. New lines are written as
 `'location' [name] (options)` with fields separated by whitespace, where options
-can include `auto` or `noauto`, and optional placement `pre`.
+can include `auto` or `noauto`, optional placement `pre`, and optional protection `protect`.
 If `pre` is not specified, `post` (append) behavior is assumed.
+Unknown or misspelled option tokens (for example `autoo`) are invalid and cause validation to fail.
 Older unwrapped forms such as `location name auto` are treated as malformed.
 If the third field is missing, it is treated as `auto`. (The name field is
 mandatory, and the tool refuses to start if it finds a line without a valid
@@ -153,6 +190,7 @@ are escaped as `\\'` and `\\\\`. For example:
 ```text
 '/opt/my tools' [tools] (auto)
 '/opt/my tools' [tools] (auto,pre)
+'/opt/locked tools' [locked] (auto,protect)
 ```
 
 You can also install a release build and invoke it directly:
@@ -183,4 +221,3 @@ This project is licensed under the MIT License. See `LICENSE`.
 
 All Rust dependencies are required to have an SPDX license expression that
 includes `MIT`. CI enforces this policy.
-

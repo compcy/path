@@ -1,0 +1,4 @@
+# layout: '<location>' [<name>] (<options>)
+'/opt/good' [good] (auto)
+'/opt/skipped' [skipped] (noauto)
+'/opt/bad' [bad] (auto,typo)

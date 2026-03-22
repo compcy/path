@@ -1,0 +1,3 @@
+# layout: '<location>' [<name>] (<options>)
+'/tmp' [home] (auto)
+'/usr/bin' [sys] (auto)

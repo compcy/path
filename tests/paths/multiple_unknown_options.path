@@ -1,0 +1,3 @@
+# layout: '<location>' [<name>] (<options>)
+'/opt/alpha' [alpha] (auto,bogus)
+'/opt/beta' [beta] (noauto,extra)
