@@ -1149,9 +1149,9 @@ fn handle_delete(delete_matches: &ArgMatches, store_file: &Path) {
 
 /// Handle the `list` subcommand by printing all stored entries.
 ///
-/// When `--pretty` is given, enumerates the current PATH segments as a
-/// two-column table with names resolved from the store file and the built-in
-/// system path list.
+/// When `--pretty` is given, enumerates the current PATH segments in a
+/// table with index, path, type, and name columns, using names resolved
+/// from the store file and the built-in system path list.
 fn handle_list(list_matches: &ArgMatches, store_file: &Path) {
     if list_matches.is_present("pretty") {
         let current = env::var("PATH").unwrap_or_default();
