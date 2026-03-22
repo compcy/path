@@ -672,6 +672,13 @@ fn build_cli() -> App<'static, 'static> {
             SubCommand::with_name("remove")
                 .about("Remove a directory from PATH")
                 .arg(
+                    Arg::with_name("force")
+                        .short("f")
+                        .long("force")
+                        .help("Allow removing protected entries and built-in system paths")
+                        .takes_value(false),
+                )
+                .arg(
                     Arg::with_name("location")
                         .help("Location or stored name to remove from PATH")
                         .required(true)
@@ -1047,22 +1054,28 @@ fn handle_add(add_matches: &ArgMatches, store_file: &Path) {
 /// segments from PATH, and prints the resulting export command.
 fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
     let argument = remove_matches.value_of("location").unwrap().to_string();
-
-    if let Some(system_entry) = find_system_path_by_name(&argument) {
-        eprintln!(
-            "error: system path '{}' ({}) is protected and cannot be removed with 'path remove'",
-            system_entry.location, system_entry.name
-        );
-        std::process::exit(1);
-    }
+    let force_remove = remove_matches.is_present("force");
 
     let mut location_to_remove = argument.clone();
     let mut resolved_by_name = false;
     let loaded_entries = load_entries(store_file).ok();
 
-    if let Some(entries) = loaded_entries.as_ref() {
+    if let Some(system_entry) = find_system_path_by_name(&argument) {
+        if !force_remove {
+            eprintln!(
+                "error: system path '{}' ({}) is protected and cannot be removed with 'path remove'",
+                system_entry.location, system_entry.name
+            );
+            std::process::exit(1);
+        }
+
+        location_to_remove = system_entry.location.clone();
+        resolved_by_name = true;
+    }
+
+    if let Some(entries) = loaded_entries.as_ref().filter(|_| !resolved_by_name) {
         if let Some(entry) = entries.iter().find(|entry| entry.name == argument) {
-            if entry.protect {
+            if entry.protect && !force_remove {
                 eprintln!(
                     "error: entry '{}' is protected and cannot be removed with 'path remove'",
                     argument
@@ -1080,7 +1093,9 @@ fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
         location_to_remove = validate_and_canonicalize_cli_path_argument(&argument);
         raw_path_arg = Some(argument.as_str());
 
-        if let Some(system_entry) = find_system_path_by_location(&location_to_remove) {
+        if let Some(system_entry) =
+            find_system_path_by_location(&location_to_remove).filter(|_| !force_remove)
+        {
             eprintln!(
                 "error: system path '{}' ({}) is protected and cannot be removed with 'path remove'",
                 system_entry.location, system_entry.name
@@ -1089,10 +1104,9 @@ fn handle_remove(remove_matches: &ArgMatches, store_file: &Path) {
         }
 
         if let Some(entries) = loaded_entries.as_ref() {
-            if let Some(entry) = entries
-                .iter()
-                .find(|entry| entry.protect && entry.location == location_to_remove)
-            {
+            if let Some(entry) = entries.iter().find(|entry| {
+                entry.protect && entry.location == location_to_remove && !force_remove
+            }) {
                 eprintln!(
                     "error: entry '{}' is protected and cannot be removed with 'path remove'",
                     entry.name

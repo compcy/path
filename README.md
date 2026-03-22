@@ -68,7 +68,7 @@ path add /some/dir mydir
 Global option:
 
 - `--file <path>` — use a specific store file instead of the default `$HOME/.path`.
-- `-f` is intentionally not available (reserved for a future `--force` option).
+- `-f` is not a global option; it is only valid as `path remove -f ...`.
 
 ### Commands
 
@@ -94,6 +94,7 @@ Global option:
   - If the argument matches a stored short name, its location is removed from PATH.
   - Stored entries marked `protect` fail instead of being removed, whether addressed by stored name or direct path.
   - Built-in protected system paths also fail instead of being removed, whether addressed by reserved name (`sysbin`, `syssbin`, `usrbin`, `usrsbin`, `usrlocalbin`, `usrlocalsbin`) or by direct path.
+  - Use `--force` (or `-f`) to remove protected store entries or protected built-in system paths from the current PATH output.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`).
   - This command does not modify `.path`.
 - `path delete <location-or-name>` — delete from the configured store file only
@@ -151,6 +152,8 @@ path add --pre /opt/custom/bin      # prepend to PATH instead of append
 path add home                        # uses stored name "home" if present
 path remove /home/$USER/.bin         # remove by path
 path remove home                     # remove from PATH by stored short name
+path remove --force locked           # force-remove a protected stored entry from PATH
+path remove -f /bin                  # force-remove a protected built-in system path
 path delete home                     # delete stored entry from .path by name
 path load                            # add only entries marked auto (usually automatic at shell startup)
 path verify                          # validate .path contents and report status

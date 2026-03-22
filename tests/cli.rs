@@ -222,7 +222,7 @@ fn add_writes_layout_comment_when_creating_store_file() {
     assert_eq!(lines.next(), Some("'/tmp/layout' [layout] (auto)"));
 }
 
-/// The store-file option is long-only; `-f` is reserved for future use.
+/// The store-file option is long-only; top-level `-f` is still rejected.
 #[test]
 fn short_f_is_not_accepted() {
     let temp = tempdir().unwrap();
@@ -915,6 +915,48 @@ fn remove_rejects_protected_store_path_argument() {
     assert!(contents.contains("'/tmp' [home] (auto,protect)"));
 }
 
+/// `remove --force` and `remove -f` should allow removing protected store entries by name or path.
+#[test]
+fn remove_force_allows_protected_store_entry() {
+    for flag in &["--force", "-f"] {
+        let temp = tempdir().unwrap();
+        let dir = temp.path();
+        let store = dir.join(".path");
+        fs::write(&store, "'/tmp' [home] (auto,protect)\n").unwrap();
+
+        // Test by stored name
+        let mut cmd = test_cmd(dir, "/tmp:/usr/bin");
+        let output = cmd
+            .arg("remove")
+            .arg(flag)
+            .arg("home")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let out_str = String::from_utf8_lossy(&output);
+        assert_eq!(out_str.trim(), "export PATH='/usr/bin'");
+
+        // Test by direct path
+        let mut cmd = test_cmd(dir, "/tmp:/usr/bin");
+        let output = cmd
+            .arg("remove")
+            .arg(flag)
+            .arg("/tmp")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let out_str = String::from_utf8_lossy(&output);
+        assert_eq!(out_str.trim(), "export PATH='/usr/bin'");
+
+        let contents = fs::read_to_string(store).unwrap();
+        assert!(contents.contains("'/tmp' [home] (auto,protect)"));
+    }
+}
+
 /// `delete` should remove the matching entry from `.path` by name.
 #[test]
 fn delete_removes_store_entry_by_name() {
@@ -1425,16 +1467,61 @@ fn remove_rejects_builtin_system_path_name() {
     assert!(stderr.contains("system path '/bin' (sysbin) is protected"));
 }
 
-/// `remove` should reject built-in protected system paths by direct path.
+/// `remove` should reject built-in protected system paths by reserved name or path.
 #[test]
-fn remove_rejects_builtin_system_path_location() {
+fn remove_rejects_builtin_system_path() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
+    // Test by reserved name
+    let mut cmd = test_cmd(dir, "/bin:/usr/bin");
+    let assert = cmd.arg("remove").arg("sysbin").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(stderr.contains("system path '/bin' (sysbin) is protected"));
+
+    // Test by direct path
     let mut cmd = test_cmd(dir, "/bin:/usr/bin");
     let assert = cmd.arg("remove").arg("/bin").assert().failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(stderr.contains("system path '/bin' (sysbin) is protected"));
+}
+
+/// `remove --force` and `remove -f` should allow removing built-in protected system paths by reserved name or path.
+#[test]
+fn remove_force_allows_builtin_system_path() {
+    for flag in &["--force", "-f"] {
+        // Test by reserved name
+        let temp = tempdir().unwrap();
+        let dir = temp.path();
+        let mut cmd = test_cmd(dir, "/bin:/usr/bin");
+        let output = cmd
+            .arg("remove")
+            .arg(flag)
+            .arg("sysbin")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let out_str = String::from_utf8_lossy(&output);
+        assert_eq!(out_str.trim(), "export PATH='/usr/bin'");
+
+        // Test by direct path
+        let temp = tempdir().unwrap();
+        let dir = temp.path();
+        let mut cmd = test_cmd(dir, "/bin:/usr/bin");
+        let output = cmd
+            .arg("remove")
+            .arg(flag)
+            .arg("/bin")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let out_str = String::from_utf8_lossy(&output);
+        assert_eq!(out_str.trim(), "export PATH='/usr/bin'");
+    }
 }
 
 /// Built-in system path names should be reserved and unavailable for stored entries.
