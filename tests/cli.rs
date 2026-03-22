@@ -1900,3 +1900,80 @@ fn list_pretty_with_empty_path_prints_only_table_header() {
     assert!(lines[0].contains("TYPE"));
     assert!(lines[0].contains("NAME"));
 }
+
+/// `path restore` should succeed even with a malformed store file.
+///
+/// Store validation is skipped for restore since it doesn't use the store,
+/// allowing users to recover protected system paths even if .path is corrupted.
+#[test]
+fn restore_succeeds_with_malformed_store() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+
+    // Create a malformed store file (missing brackets and options).
+    fs::write(&store, "bad entry without proper format\n").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let output = cmd
+        .arg("restore")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out_str = String::from_utf8_lossy(&output);
+
+    // Should output a valid export statement with restored system paths.
+    assert!(out_str.contains("export PATH="));
+    assert!(out_str.contains("/bin"));
+    assert!(out_str.contains("/usr/bin"));
+}
+
+/// Default `path` output should succeed even with a malformed store file.
+///
+/// Store validation is skipped for the default command (print current PATH)
+/// since it doesn't use the store.
+#[test]
+fn default_path_output_succeeds_with_malformed_store() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+
+    // Create a malformed store file (invalid entry).
+    fs::write(&store, "'/invalid location with colon:' [bad] (auto)\n").unwrap();
+
+    let mut cmd = test_cmd(dir, "test:path");
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let out_str = String::from_utf8_lossy(&output);
+
+    // Should output the current PATH despite malformed store.
+    assert!(out_str.contains("export PATH="));
+    assert!(out_str.contains("test:path"));
+}
+
+/// `path add` should still validate the store file and fail on malformed entries.
+///
+/// Store validation still runs for commands that use the store, so users
+/// cannot accidentally write to a malformed store.
+#[test]
+fn add_fails_with_malformed_store() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+
+    // Create a malformed store file (missing brackets).
+    fs::write(&store, "bad entry without name field\n").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let assert = cmd
+        .arg("add")
+        .arg("/tmp/test")
+        .arg("test")
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+
+    // Should report validation error.
+    assert!(stderr.contains("error"));
+}

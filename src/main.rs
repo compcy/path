@@ -1374,8 +1374,8 @@ fn print_current_path() {
 
 /// Program entry point.
 ///
-/// Validates stored entries, dispatches subcommands, and falls back to
-/// printing the current PATH when no subcommand is provided.
+/// Validates stored entries for subcommands that need them, dispatches subcommands,
+/// and falls back to printing the current PATH when no subcommand is provided.
 fn main() {
     let matches = build_cli().get_matches();
     let store_file = resolve_store_file_path(&matches);
@@ -1385,8 +1385,19 @@ fn main() {
         return;
     }
 
-    if let Err(error) = validate_entries(&store_file) {
-        eprintln!("warning: could not validate entries: {}", error);
+    // Subcommands that need the store file: add, remove, delete, list, load.
+    // Store validation is skipped for restore and default (print_current_path),
+    // which don't use the store, so a malformed store file won't block recovery.
+    let needs_store = matches.subcommand_matches("add").is_some()
+        || matches.subcommand_matches("remove").is_some()
+        || matches.subcommand_matches("delete").is_some()
+        || matches.subcommand_matches("list").is_some()
+        || matches.subcommand_matches("load").is_some();
+
+    if needs_store {
+        if let Err(error) = validate_entries(&store_file) {
+            eprintln!("warning: could not validate entries: {}", error);
+        }
     }
 
     if let Some(add_matches) = matches.subcommand_matches("add") {
