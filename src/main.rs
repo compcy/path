@@ -759,7 +759,7 @@ fn build_cli() -> App<'static, 'static> {
                 .arg(
                     Arg::with_name("pretty")
                         .long("pretty")
-                        .help("Print PATH entries as a formatted two-column table with names")
+                        .help("Print PATH entries as a formatted four-column table (#, PATH, TYPE, NAME)")
                         .takes_value(false),
                 ),
         )
