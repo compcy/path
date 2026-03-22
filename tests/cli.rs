@@ -1536,6 +1536,24 @@ fn add_rejects_reserved_system_path_name() {
     assert!(stderr.contains("name 'sysbin' is reserved for a protected system path"));
 }
 
+/// Store validation should reject entries that reuse reserved built-in system names.
+#[test]
+fn verify_rejects_store_entry_with_reserved_system_name() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "reserved_system_name").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let assert = cmd.arg("verify").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+
+    assert!(
+        stderr.contains("error: name 'sysbin' at line 2 is reserved for a protected system path"),
+        "expected reserved-name validation error: {}",
+        stderr
+    );
+}
+
 /// `list` should read quoted locations containing literal spaces.
 #[test]
 fn list_reads_quoted_location_with_spaces() {

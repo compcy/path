@@ -591,6 +591,17 @@ fn validate_loaded_entries(store_file: &Path, entries: &[PathEntry], fail_on_inv
         std::process::exit(1);
     }
 
+    if let Some(e) = entries
+        .iter()
+        .find(|e| find_system_path_by_name(&e.name).is_some())
+    {
+        eprintln!(
+            "error: name '{}' at line {} is reserved for a protected system path",
+            e.name, e.line_number
+        );
+        std::process::exit(1);
+    }
+
     let mut seen_names = std::collections::HashMap::new();
     for e in entries {
         seen_names
