@@ -21,6 +21,8 @@ This directory contains pre-made `.path` store files for integration tests.
 - `duplicate_paths.path` - Multiple entries that normalize to the same stored location (error case)
 - `legacy_unwrapped.path` - Legacy format without wrapping delimiters (error case)
 - `one_invalid_one_valid.path` - Mix of valid and invalid locations (warning case)
+- `mixed_valid_and_invalid_options.path` - Mix of fully-valid entries and entries with an unknown option token in one file (warning/error case)
+- `multiple_unknown_options.path` - Two entries each with an unknown option token (warning/error case)
 - `system_paths.path` - Built-in system paths stored explicitly (allowed case)
 - `known_paths.path` - Known non-system built-in paths stored explicitly (allowed case)
 

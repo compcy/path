@@ -21,7 +21,7 @@ struct PathEntry {
     prepend: bool,
     protect: bool,
     invalid_option: Option<String>,
-    source_line: String,
+    original_options: Option<String>,
     line_number: usize,
 }
 
@@ -35,7 +35,7 @@ impl PathEntry {
             prepend: false,
             protect: false,
             invalid_option: None,
-            source_line: String::new(),
+            original_options: None,
             line_number: 0,
         }
     }
@@ -48,10 +48,15 @@ impl PathEntry {
         self
     }
 
-    // Preserve the original line text and its line number for diagnostics.
-    fn with_source(mut self, source_line: impl Into<String>, line_number: usize) -> Self {
-        self.source_line = source_line.into();
+    // Preserve source line-number metadata for diagnostics.
+    fn with_line_number(mut self, line_number: usize) -> Self {
         self.line_number = line_number;
+        self
+    }
+
+    // Preserve the raw options token for unknown-option round-trip output.
+    fn with_original_options(mut self, options_token: impl Into<String>) -> Self {
+        self.original_options = Some(options_token.into());
         self
     }
 }
@@ -333,8 +338,7 @@ fn quote_store_location_field(field: &str) -> String {
 
 /// Build a malformed nameless entry with default option values.
 fn malformed_nameless_entry(location: &str, line_number: usize) -> PathEntry {
-    PathEntry::new(strip_trailing_slash(location), String::new())
-        .with_source(String::new(), line_number)
+    PathEntry::new(strip_trailing_slash(location), String::new()).with_line_number(line_number)
 }
 
 fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
@@ -353,7 +357,7 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
             match (parsed_location, parsed_name) {
                 (Some(location), Some(name)) => {
                     PathEntry::new(strip_trailing_slash(location), name)
-                        .with_source(line, line_number)
+                        .with_line_number(line_number)
                 }
                 (None, _) => {
                     eprintln!(
@@ -389,8 +393,11 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
                 ) => {
                     let mut entry = PathEntry::new(strip_trailing_slash(location), name)
                         .with_options(autoset, prepend, protect)
-                        .with_source(line, line_number);
+                        .with_line_number(line_number);
                     entry.invalid_option = invalid_option;
+                    if entry.invalid_option.is_some() {
+                        entry = entry.with_original_options(options.as_str());
+                    }
                     entry
                 }
                 (None, _, _) => {
@@ -437,8 +444,15 @@ fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
 
 /// Serialize an entry back into a line.
 fn format_entry_line(entry: &PathEntry) -> String {
-    if entry.invalid_option.is_some() && !entry.source_line.is_empty() {
-        return entry.source_line.clone();
+    if entry.invalid_option.is_some() {
+        if let Some(options_token) = entry.original_options.as_deref() {
+            return format!(
+                "{} [{}] {}",
+                quote_store_location_field(&entry.location),
+                entry.name,
+                options_token
+            );
+        }
     }
 
     format!(
@@ -516,7 +530,7 @@ fn report_invalid_option(level: &str, store_file: &Path, entry: &PathEntry) {
         entry.line_number,
         store_file.display()
     );
-    eprintln!("{}: {}", level, entry.source_line);
+    eprintln!("{}: {}", level, format_entry_line(entry));
 }
 
 /// Check the existing entries, reporting any whose `location` does not
@@ -1480,7 +1494,7 @@ mod tests {
         assert!(!entry.prepend);
         assert!(!entry.protect);
         assert!(entry.invalid_option.is_none());
-        assert!(entry.source_line.is_empty());
+        assert!(entry.original_options.is_none());
         assert_eq!(entry.line_number, 0);
     }
 
@@ -1495,23 +1509,35 @@ mod tests {
         assert!(entry.prepend);
         assert!(entry.protect);
         assert!(entry.invalid_option.is_none());
-        assert!(entry.source_line.is_empty());
+        assert!(entry.original_options.is_none());
         assert_eq!(entry.line_number, 0);
     }
 
     #[test]
-    /// Ensure `with_source` records the original store line and line number.
-    fn path_entry_with_source_updates_source_metadata() {
-        let entry =
-            PathEntry::new("/tmp/tools", "tools").with_source("'/tmp/tools' [tools] (auto)", 4);
+    /// Ensure `with_line_number` records source line metadata.
+    fn path_entry_with_line_number_updates_line_metadata() {
+        let entry = PathEntry::new("/tmp/tools", "tools").with_line_number(4);
 
         assert_eq!(entry.location, "/tmp/tools");
         assert_eq!(entry.name, "tools");
         assert!(entry.autoset);
         assert!(!entry.prepend);
         assert!(!entry.protect);
-        assert_eq!(entry.source_line, "'/tmp/tools' [tools] (auto)");
+        assert!(entry.original_options.is_none());
         assert_eq!(entry.line_number, 4);
+    }
+
+    #[test]
+    /// Ensure `with_original_options` stores the raw options token for round-trip output.
+    fn path_entry_with_original_options_preserves_raw_token() {
+        let entry = PathEntry::new("/tmp/tools", "tools")
+            .with_options(false, true, true)
+            .with_original_options("(noauto,pre,protect,postfix)");
+
+        assert_eq!(
+            entry.original_options.as_deref(),
+            Some("(noauto,pre,protect,postfix)")
+        );
     }
 
     #[test]
@@ -1801,7 +1827,7 @@ mod tests {
             prepend: false,
             protect: true,
             invalid_option: None,
-            source_line: String::new(),
+            original_options: None,
             line_number: 1,
         }];
 
@@ -1911,7 +1937,11 @@ mod tests {
         assert!(entry.prepend);
         assert!(entry.protect);
         assert_eq!(entry.invalid_option.as_deref(), Some("postfix"));
-        assert_eq!(entry.source_line, line);
+        assert_eq!(
+            entry.original_options.as_deref(),
+            Some("(noauto,pre,protect,postfix)")
+        );
+        assert_eq!(format_entry_line(&entry), line);
     }
 
     #[test]

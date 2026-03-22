@@ -2000,3 +2000,168 @@ fn add_fails_with_malformed_store() {
     // Should report validation error.
     assert!(stderr.contains("error"));
 }
+
+/// `load` should emit a separate warning pair for each entry with an unknown option,
+/// including the correct line number and rendered entry line for each.
+#[test]
+fn load_warns_once_per_entry_with_unknown_option() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "multiple_unknown_options").unwrap();
+    let line1 = "'/opt/alpha' [alpha] (auto,bogus)";
+    let line2 = "'/opt/beta' [beta] (noauto,extra)";
+
+    let mut cmd = test_cmd(dir, "");
+    let assert = cmd.arg("load").assert().success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+
+    // Both entries should produce their own warning header.
+    assert!(
+        stderr.contains("warning: unknown entry option 'bogus'"),
+        "expected bogus warning: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("warning: unknown entry option 'extra'"),
+        "expected extra warning: {}",
+        stderr
+    );
+
+    // Each warning should cite the correct source line number.
+    assert!(stderr.contains("line 2"), "expected line 2: {}", stderr);
+    assert!(stderr.contains("line 3"), "expected line 3: {}", stderr);
+
+    // Each warning should include the rendered entry line.
+    assert!(
+        stderr.contains(line1),
+        "expected line1 in stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains(line2),
+        "expected line2 in stderr: {}",
+        stderr
+    );
+}
+
+/// `verify` should emit a separate error pair for each entry with an unknown option,
+/// reporting all of them before exiting, with correct line numbers and rendered entry lines.
+#[test]
+fn verify_reports_all_entries_with_unknown_options() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "multiple_unknown_options").unwrap();
+    let line1 = "'/opt/alpha' [alpha] (auto,bogus)";
+    let line2 = "'/opt/beta' [beta] (noauto,extra)";
+
+    let mut cmd = test_cmd(dir, "");
+    let assert = cmd.arg("verify").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+
+    // Both entries should produce their own error header.
+    assert!(
+        stderr.contains("error: unknown entry option 'bogus'"),
+        "expected bogus error: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("error: unknown entry option 'extra'"),
+        "expected extra error: {}",
+        stderr
+    );
+
+    // Each error should cite the correct source line number.
+    assert!(stderr.contains("line 2"), "expected line 2: {}", stderr);
+    assert!(stderr.contains("line 3"), "expected line 3: {}", stderr);
+
+    // Each error should include the rendered entry line.
+    assert!(
+        stderr.contains(line1),
+        "expected line1 in stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains(line2),
+        "expected line2 in stderr: {}",
+        stderr
+    );
+}
+
+/// A file mixing valid and invalid-option entries: `load` should warn about the
+/// invalid ones, still load the valid `auto` entries, and skip `noauto` entries.
+#[test]
+fn load_processes_valid_entries_and_warns_for_invalid_option_entries() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "mixed_valid_and_invalid_options").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let assert = cmd.arg("load").assert().success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+
+    // The fully-valid auto entry must be loaded.
+    assert!(
+        stdout.contains("/opt/good"),
+        "expected /opt/good in PATH: {}",
+        stdout
+    );
+    // The noauto entry must not be loaded.
+    assert!(
+        !stdout.contains("/opt/skipped"),
+        "expected /opt/skipped absent: {}",
+        stdout
+    );
+    // The invalid-option entry is auto so it is still loaded (recognized options take effect).
+    assert!(
+        stdout.contains("/opt/bad"),
+        "expected /opt/bad loaded despite unknown option: {}",
+        stdout
+    );
+    // A warning must be emitted for the unknown option only.
+    assert!(
+        stderr.contains("warning: unknown entry option 'typo'"),
+        "expected typo warning: {}",
+        stderr
+    );
+    // No unknown-option warning emitted for the fully-valid entry.
+    // (The quoted entry-line form `warning: '/opt/good'` would only appear in
+    //  an unknown-option diagnostic; a plain "/opt/good" can appear in the
+    //  "paths do not exist" notice, which is unrelated to option validity.)
+    assert!(
+        !stderr.contains("warning: '/opt/good'"),
+        "expected no unknown-option warning for good entry: {}",
+        stderr
+    );
+}
+
+/// A file mixing valid and invalid-option entries: `verify` should report errors
+/// only for invalid-option entries and not for the clean ones.
+#[test]
+fn verify_reports_only_invalid_option_entries_in_mixed_file() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "mixed_valid_and_invalid_options").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let assert = cmd.arg("verify").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+
+    // Error for the invalid-option entry.
+    assert!(
+        stderr.contains("error: unknown entry option 'typo'"),
+        "expected typo error: {}",
+        stderr
+    );
+    // No error for the clean entries.
+    assert!(
+        !stderr.contains("'/opt/good'"),
+        "expected no error for good entry: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("'/opt/skipped'"),
+        "expected no error for skipped entry: {}",
+        stderr
+    );
+}
