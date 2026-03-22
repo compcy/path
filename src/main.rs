@@ -273,25 +273,6 @@ fn resolve_store_file_path(matches: &ArgMatches) -> PathBuf {
         .unwrap_or_else(default_store_file_path)
 }
 
-/// Parse a line from the store file.
-///
-/// Preferred format is `'<location>' [<name>] (<options>)` with fields separated
-/// by whitespace. Locations are wrapped in single quotes to make delimiter
-/// boundaries explicit.
-///
-/// `name` is wrapped in `[]` and options are wrapped in `()`.
-///
-/// `autoset` options are `auto` or `noauto`; placement options are `pre` or
-/// `post`; protection options include `protect`. Missing or blank options
-/// default to `auto` plus post and no protection.
-fn parse_autoset_value(value: &str) -> Option<AutosetMode> {
-    match value {
-        "auto" => Some(AutosetMode::Auto),
-        "noauto" => Some(AutosetMode::NoAuto),
-        _ => None,
-    }
-}
-
 /// Strip a leading and trailing single quote from a field.
 fn strip_wrapped(value: &str, open: char, close: char) -> Option<&str> {
     value
@@ -313,15 +294,11 @@ fn parse_name_field(value: &str) -> Option<String> {
 ///
 /// Result for decoding a store entry options field.
 enum EntryOptionsParseResult {
-    Valid {
+    Parsed {
         auto_mode: AutosetMode,
         placement_mode: PlacementMode,
         protection_mode: ProtectionMode,
-        invalid_option: Option<String>,
-    },
-    Conflicting {
-        left: String,
-        right: String,
+        diagnostic: Option<EntryDiagnosticKind>,
     },
     Malformed,
 }
@@ -338,11 +315,11 @@ fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
     };
 
     if normalized.is_empty() {
-        return EntryOptionsParseResult::Valid {
+        return EntryOptionsParseResult::Parsed {
             auto_mode: AutosetMode::Auto,
             placement_mode: PlacementMode::Postfix,
             protection_mode: ProtectionMode::Unprotected,
-            invalid_option: None,
+            diagnostic: None,
         };
     }
 
@@ -352,32 +329,29 @@ fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
         .filter(|opt| !opt.is_empty())
         .collect();
 
-    if options.contains(&"auto") && options.contains(&"noauto") {
-        return EntryOptionsParseResult::Conflicting {
-            left: "auto".to_string(),
-            right: "noauto".to_string(),
-        };
-    }
-
-    if options.contains(&"pre") && options.contains(&"post") {
-        return EntryOptionsParseResult::Conflicting {
-            left: "pre".to_string(),
-            right: "post".to_string(),
-        };
+    for (left, right) in [("auto", "noauto"), ("pre", "post")] {
+        if options.contains(&left) && options.contains(&right) {
+            return EntryOptionsParseResult::Parsed {
+                auto_mode: AutosetMode::Auto,
+                placement_mode: PlacementMode::Postfix,
+                protection_mode: ProtectionMode::Unprotected,
+                diagnostic: Some(EntryDiagnosticKind::ConflictingOptions {
+                    left: left.to_string(),
+                    right: right.to_string(),
+                }),
+            };
+        }
     }
 
     let mut auto_mode = AutosetMode::Auto;
     let mut placement_mode = PlacementMode::Postfix;
     let mut protection_mode = ProtectionMode::Unprotected;
-    let mut invalid_option = None;
+    let mut unknown_option = None;
 
     for option in options {
-        if let Some(parsed_auto_mode) = parse_autoset_value(option) {
-            auto_mode = parsed_auto_mode;
-            continue;
-        }
-
         match option {
+            "auto" => auto_mode = AutosetMode::Auto,
+            "noauto" => auto_mode = AutosetMode::NoAuto,
             "pre" => placement_mode = PlacementMode::Prefix,
             "post" => placement_mode = PlacementMode::Postfix,
             "protect" => protection_mode = ProtectionMode::Protected,
@@ -386,8 +360,8 @@ fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
                     .chars()
                     .all(|character| character.is_ascii_alphabetic())
                 {
-                    if invalid_option.is_none() {
-                        invalid_option = Some(other.to_string());
+                    if unknown_option.is_none() {
+                        unknown_option = Some(other.to_string());
                     }
                     continue;
                 }
@@ -396,11 +370,11 @@ fn parse_entry_options(value: &str) -> EntryOptionsParseResult {
         }
     }
 
-    EntryOptionsParseResult::Valid {
+    EntryOptionsParseResult::Parsed {
         auto_mode,
         placement_mode,
         protection_mode,
-        invalid_option,
+        diagnostic: unknown_option.map(|option| EntryDiagnosticKind::UnknownOption { option }),
     }
 }
 
@@ -494,38 +468,25 @@ fn parse_entry_line_with_diagnostic(
                 (
                     Some(location),
                     Some(name),
-                    EntryOptionsParseResult::Valid {
+                    EntryOptionsParseResult::Parsed {
                         auto_mode,
                         placement_mode,
                         protection_mode,
-                        invalid_option,
+                        diagnostic,
                     },
                 ) => {
                     let entry = PathEntry::new(strip_trailing_slash(location), name)
                         .with_options(auto_mode, placement_mode, protection_mode)
                         .with_line_number(line_number);
 
-                    let diagnostic = invalid_option.map(|option| EntryDiagnostic {
+                    let diagnostic = diagnostic.map(|kind| EntryDiagnostic {
                         line_number,
                         line: line.to_string(),
-                        kind: EntryDiagnosticKind::UnknownOption { option },
+                        kind,
                     });
 
                     (entry, diagnostic)
                 }
-                (
-                    Some(location),
-                    Some(name),
-                    EntryOptionsParseResult::Conflicting { left, right },
-                ) => (
-                    PathEntry::new(strip_trailing_slash(location), name)
-                        .with_line_number(line_number),
-                    Some(EntryDiagnostic {
-                        line_number,
-                        line: line.to_string(),
-                        kind: EntryDiagnosticKind::ConflictingOptions { left, right },
-                    }),
-                ),
                 (None, _, _) => {
                     eprintln!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
