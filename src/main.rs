@@ -1143,7 +1143,7 @@ fn format_list_entry(entry: &PathEntry) -> String {
     )
 }
 
-/// Print the current PATH as a formatted table with index, type, and name columns.
+/// Print the current PATH as a formatted table with index, name, and type columns.
 fn print_pretty_path_output(current: &str, entries: &[PathEntry]) {
     let segments: Vec<&str> = if current.is_empty() {
         Vec::new()
@@ -1185,24 +1185,24 @@ fn print_pretty_path_output(current: &str, entries: &[PathEntry]) {
         .max("NAME".len());
 
     println!(
-        "{:<index_width$}  {:<path_width$}  {:<type_width$}  NAME",
+        "{:<index_width$}  {:<path_width$}  {:<name_width$}  TYPE",
         "#",
         "PATH",
-        "TYPE",
+        "NAME",
         index_width = index_col_width,
         path_width = path_col_width,
-        type_width = type_col_width
+        name_width = name_col_width
     );
     println!(
-        "{:-<index_width$}  {:-<path_width$}  {:-<type_width$}  {:-<name_width$}",
+        "{:-<index_width$}  {:-<path_width$}  {:-<name_width$}  {:-<type_width$}",
         "",
         "",
         "",
         "",
         index_width = index_col_width,
         path_width = path_col_width,
-        type_width = type_col_width,
-        name_width = name_col_width
+        name_width = name_col_width,
+        type_width = type_col_width
     );
 
     for (index, ((segment, entry_type), name)) in segments
@@ -1212,14 +1212,14 @@ fn print_pretty_path_output(current: &str, entries: &[PathEntry]) {
         .enumerate()
     {
         println!(
-            "{:<index_width$}  {:<path_width$}  {:<type_width$}  {}",
+            "{:<index_width$}  {:<path_width$}  {:<name_width$}  {}",
             index + 1,
             segment,
-            entry_type,
             name,
+            entry_type,
             index_width = index_col_width,
             path_width = path_col_width,
-            type_width = type_col_width
+            name_width = name_col_width
         );
     }
 }

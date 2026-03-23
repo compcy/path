@@ -76,17 +76,17 @@ Global option:
   - Each segment of the active PATH is printed on its own line.
   - Column 1 (`#`): 1-based row number.
   - Column 2 (`PATH`): the directory path.
-  - Column 3 (`TYPE`): `system` for built-in system paths, `known` for known extra paths, blank for others.
-  - Column 4 (`NAME`): resolved first from the store file, then from the built-in system/known path lists; blank when no name is known.
+  - Column 3 (`NAME`): resolved first from the store file, then from the built-in system/known path lists; blank when no name is known.
+  - Column 4 (`TYPE`): `system` for built-in system paths, `known` for known extra paths, blank for others.
   - Protected entries show `[protected]` in the `TYPE` column.
   - Column widths are fitted to the widest value in each column.
 
   ```
-  #  PATH                TYPE                NAME
-  -  ------------------  ------------------  -----------
-  1  /usr/local/bin      system [protected]  usrlocalbin
-  2  /usr/bin            system [protected]  usrbin
-  3  /bin                system [protected]  sysbin
+  #  PATH                NAME         TYPE
+  -  ------------------  -----------  ------------------
+  1  /usr/local/bin      usrlocalbin  system [protected]
+  2  /usr/bin            usrbin       system [protected]
+  3  /bin                sysbin       system [protected]
   4  /home/user/mytools
   ```
 

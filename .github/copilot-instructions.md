@@ -21,11 +21,18 @@
 - Follow red/green TDD strictly as two separate steps:
   1. **Red** — Write the tests first. Run `cargo test --all` and confirm the new tests _fail_ before writing any implementation code. Do not proceed until the failure is verified.
   2. **Green** — Write the minimum implementation needed to make the failing tests pass. Run `cargo test --all` again and confirm all tests now pass.
+- Mandatory execution gate for each behavior change:
+  1. Edit only test files (and fixtures/docs for tests) in Red.
+  2. Run a focused failing test command (for example `cargo test --test cli <test_name>`), capture the failure, and report it.
+  3. Only after observing that failure, edit implementation files under `src/`.
+  4. Re-run the focused test(s), then `cargo test --all`, then `cargo clippy --all-targets -- -D warnings`.
+- Implementation edits before an observed Red failure are not allowed. If this happens, stop, disclose the deviation, and re-run the workflow from Red.
 - Never write implementation code and its tests in the same step; the failing-test state must be observed and confirmed between steps.
 - This rule applies to all production code and all test-only code, including test helpers, test utilities, parsing helpers used only by tests, and shared fixture/setup helpers.
 - Adding or modifying helper functions used by tests is not an exception to TDD: write the helper tests first, observe the failing state, and only then implement or modify the helper.
 - Do not batch multiple new helper implementations into a single Green step unless each helper's corresponding failing test state was already observed and recorded during a prior Red step.
 - When reporting work, explicitly indicate the observed **Red** failure before the **Green** implementation step so the workflow is auditable in the conversation history.
+- In status updates and final summaries, include exact commands used for Red and Green and whether each command exited non-zero (Red) or zero (Green).
 - Every new function should have a corresponding unit test.
 - Refactors are not exempt: when a refactor introduces any new function (including private helpers), add corresponding unit tests for each new function in the same change.
 - Integration tests should be created to test the output of the CLI commands.

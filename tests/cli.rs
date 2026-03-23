@@ -44,18 +44,48 @@ fn get_stdout(cmd: &mut assert_cmd::Command) -> String {
 
 /// Return all non-blank pretty-print names from default pretty output.
 fn pretty_output_names(output: &str) -> Vec<String> {
+    let header = match output.lines().next() {
+        Some(line) => line,
+        None => return Vec::new(),
+    };
+    let name_start = match header.find("NAME") {
+        Some(index) => index,
+        None => return Vec::new(),
+    };
+    let type_start = match header.find("TYPE") {
+        Some(index) => index,
+        None => return Vec::new(),
+    };
+
     output
         .lines()
         .skip(2)
         .filter_map(|line| {
-            let trimmed = line.trim_end();
-            trimmed
-                .rfind("  ")
-                .map(|separator| trimmed[separator..].trim())
-                .filter(|name| !name.is_empty())
-                .map(str::to_string)
+            if line.len() < type_start {
+                return None;
+            }
+
+            let name = line[name_start..type_start].trim();
+            if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            }
         })
         .collect()
+}
+
+/// Return the pretty-output NAME cell for a specific PATH segment.
+fn pretty_output_name_for_path(output: &str, path: &str) -> Option<String> {
+    let header = output.lines().next()?;
+    let name_start = header.find("NAME")?;
+    let type_start = header.find("TYPE")?;
+
+    output
+        .lines()
+        .skip(2)
+        .find(|line| line.contains(path) && line.len() >= type_start)
+        .map(|line| line[name_start..type_start].trim().to_string())
 }
 
 /// Assert that all non-blank pretty-print names in the table are unique.
@@ -74,7 +104,8 @@ fn assert_pretty_output_has_unique_names(output: &str) {
 /// Ensure pretty-output name extraction skips blank name cells.
 #[test]
 fn pretty_output_names_extracts_non_blank_names() {
-    let output = "PATH  NAME\n----  ----\n/usr/bin  usrbin\n/bin  sysbin\n/unknown/path\n";
+    let output =
+        "#  PATH      NAME    TYPE\n-  --------  ------  ----\n1  /usr/bin  usrbin  system\n2  /bin      sysbin  system\n3  /unknown/path\n";
 
     assert_eq!(
         pretty_output_names(output),
@@ -85,7 +116,8 @@ fn pretty_output_names_extracts_non_blank_names() {
 /// Ensure the uniqueness assertion permits rows with no pretty-print name.
 #[test]
 fn assert_pretty_output_has_unique_names_accepts_blank_names() {
-    let output = "PATH  NAME\n----  ----\n/usr/bin  usrbin\n/unknown/path\n";
+    let output =
+        "#  PATH          NAME    TYPE\n-  ------------  ------  ----\n1  /usr/bin      usrbin  system\n2  /unknown/path\n";
 
     assert_pretty_output_has_unique_names(output);
 }
@@ -93,7 +125,8 @@ fn assert_pretty_output_has_unique_names_accepts_blank_names() {
 /// Ensure the uniqueness assertion fails when duplicate names appear.
 #[test]
 fn assert_pretty_output_has_unique_names_rejects_duplicates() {
-    let output = "PATH  NAME\n----  ----\n/usr/bin  dup\n/bin  dup\n";
+    let output =
+        "#  PATH      NAME  TYPE\n-  --------  ----  ----\n1  /usr/bin  dup   system\n2  /bin      dup   system\n";
 
     let result = std::panic::catch_unwind(|| assert_pretty_output_has_unique_names(output));
     assert!(result.is_err());
@@ -585,12 +618,10 @@ fn list_pretty_prefers_stored_names_for_system_paths_in_store_file() {
     let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
-    let bin_line = out.lines().find(|line| line.contains("/bin")).unwrap();
-    let bin_name = bin_line[bin_line.rfind("  ").unwrap()..].trim();
+    let bin_name = pretty_output_name_for_path(&out, "/bin").unwrap();
     assert_eq!(bin_name, "custombin");
 
-    let usrbin_line = out.lines().find(|line| line.contains("/usr/bin")).unwrap();
-    let usrbin_name = usrbin_line[usrbin_line.rfind("  ").unwrap()..].trim();
+    let usrbin_name = pretty_output_name_for_path(&out, "/usr/bin").unwrap();
     assert_eq!(usrbin_name, "customusrbin");
 }
 
@@ -630,18 +661,10 @@ fn list_pretty_prefers_stored_names_for_known_paths_in_store_file() {
     let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
-    let bin_line = out
-        .lines()
-        .find(|line| line.contains("/opt/homebrew/bin"))
-        .unwrap();
-    let bin_name = bin_line[bin_line.rfind("  ").unwrap()..].trim();
+    let bin_name = pretty_output_name_for_path(&out, "/opt/homebrew/bin").unwrap();
     assert_eq!(bin_name, "brewbin");
 
-    let sbin_line = out
-        .lines()
-        .find(|line| line.contains("/opt/homebrew/sbin"))
-        .unwrap();
-    let sbin_name = sbin_line[sbin_line.rfind("  ").unwrap()..].trim();
+    let sbin_name = pretty_output_name_for_path(&out, "/opt/homebrew/sbin").unwrap();
     assert_eq!(sbin_name, "brewsbin");
 }
 
@@ -700,18 +723,12 @@ fn list_pretty_prefers_stored_names_for_home_relative_known_paths() {
     let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
-    let cargo_line = out
-        .lines()
-        .find(|line| line.contains(cargo_path.to_string_lossy().as_ref()))
-        .unwrap();
-    let cargo_name = cargo_line[cargo_line.rfind("  ").unwrap()..].trim();
+    let cargo_name =
+        pretty_output_name_for_path(&out, cargo_path.to_string_lossy().as_ref()).unwrap();
     assert_eq!(cargo_name, "mycargo");
 
-    let pipx_line = out
-        .lines()
-        .find(|line| line.contains(pipx_path.to_string_lossy().as_ref()))
-        .unwrap();
-    let pipx_name = pipx_line[pipx_line.rfind("  ").unwrap()..].trim();
+    let pipx_name =
+        pretty_output_name_for_path(&out, pipx_path.to_string_lossy().as_ref()).unwrap();
     assert_eq!(pipx_name, "mypipx");
 }
 
@@ -1870,7 +1887,7 @@ fn list_pretty_shows_header_and_segments() {
     assert!(lines.iter().any(|l| l.contains("/bin")));
 }
 
-/// Default output should include an index column and a type column.
+/// Default output should include an index column with NAME before TYPE.
 #[test]
 fn list_pretty_includes_index_and_type_columns() {
     let temp = tempdir().unwrap();
@@ -1881,8 +1898,11 @@ fn list_pretty_includes_index_and_type_columns() {
 
     assert!(out.contains("#"));
     assert!(out.contains("PATH"));
-    assert!(out.contains("TYPE"));
     assert!(out.contains("NAME"));
+    assert!(out.contains("TYPE"));
+
+    let header = out.lines().next().unwrap();
+    assert!(header.find("NAME").unwrap() < header.find("TYPE").unwrap());
 
     assert!(out
         .lines()
@@ -1986,17 +2006,9 @@ fn list_pretty_leaves_name_blank_for_unknown_segments() {
     let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
-    // The segment must appear.
-    let seg_line = out
-        .lines()
-        .find(|l| l.contains("/some/unknown/path"))
-        .unwrap();
-
-    // After the path, the line should have only trailing whitespace (no name).
-    assert!(
-        seg_line.trim_end().ends_with("/some/unknown/path")
-            || seg_line["/some/unknown/path".len()..].trim().is_empty()
-    );
+    // NAME should be blank for an unknown segment.
+    let name = pretty_output_name_for_path(&out, "/some/unknown/path").unwrap();
+    assert!(name.is_empty());
 }
 
 /// Default output with an empty PATH should print only header rows.
