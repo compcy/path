@@ -42,7 +42,7 @@ fn get_stdout(cmd: &mut assert_cmd::Command) -> String {
     String::from_utf8_lossy(&output).to_string()
 }
 
-/// Return all non-blank pretty-print names from `list --pretty` output.
+/// Return all non-blank pretty-print names from default pretty output.
 fn pretty_output_names(output: &str) -> Vec<String> {
     output
         .lines()
@@ -130,7 +130,10 @@ fn get_stdout_returns_stdout_text() {
     let mut cmd = test_cmd(dir, "foo:bar");
     let out = get_stdout(&mut cmd);
 
-    assert_eq!(out.trim(), "export PATH='foo:bar'");
+    assert!(out.contains("#"));
+    assert!(out.contains("PATH"));
+    assert!(out.contains("foo"));
+    assert!(out.contains("bar"));
 }
 
 /// Ensure get_stderr returns the command's stderr text for failures.
@@ -155,7 +158,10 @@ fn test_cmd_uses_provided_path_and_store_file() {
 
     let mut path_cmd = test_cmd(dir, "alpha:beta");
     let path_out = get_stdout(&mut path_cmd);
-    assert_eq!(path_out.trim(), "export PATH='alpha:beta'");
+    assert!(path_out.contains("#"));
+    assert!(path_out.contains("PATH"));
+    assert!(path_out.contains("alpha"));
+    assert!(path_out.contains("beta"));
 
     let mut list_cmd = test_cmd(dir, "");
     let list_out = get_stdout(list_cmd.arg("list"));
@@ -168,8 +174,7 @@ fn get_stderr(cmd: &mut assert_cmd::Command) -> String {
     String::from_utf8_lossy(&assert.get_output().stderr).to_string()
 }
 
-/// Confirm that, with no subcommands, the utility simply echoes the
-/// value of the `PATH` environment variable.
+/// Confirm that, with no subcommands, the utility prints pretty PATH output.
 #[test]
 fn prints_path_env() {
     // run in an isolated directory so the workspace's `.path` file is
@@ -181,8 +186,10 @@ fn prints_path_env() {
     let mut cmd = test_cmd(dir, "foo:bar");
     let output = cmd.assert().success().get_output().stdout.clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("export PATH='"));
-    assert!(out_str.contains("foo:bar"));
+    assert!(out_str.contains("#"));
+    assert!(out_str.contains("PATH"));
+    assert!(out_str.contains("foo"));
+    assert!(out_str.contains("bar"));
 }
 
 /// By default, entries are persisted to `$HOME/.path` when `--file` is omitted.
@@ -575,7 +582,7 @@ fn list_pretty_prefers_stored_names_for_system_paths_in_store_file() {
     copy_fixture_to_temp_store(dir, "system_paths").unwrap();
 
     let mut cmd = test_cmd(dir, "/bin:/usr/bin");
-    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
     let bin_line = out.lines().find(|line| line.contains("/bin")).unwrap();
@@ -620,7 +627,7 @@ fn list_pretty_prefers_stored_names_for_known_paths_in_store_file() {
     copy_fixture_to_temp_store(dir, "known_paths").unwrap();
 
     let mut cmd = test_cmd(dir, "/opt/homebrew/bin:/opt/homebrew/sbin");
-    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
     let bin_line = out
@@ -690,7 +697,7 @@ fn list_pretty_prefers_stored_names_for_home_relative_known_paths() {
 
     let mut cmd = test_cmd(dir, &path_env);
     cmd.env("HOME", &home);
-    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
     let cargo_line = out
@@ -1841,14 +1848,14 @@ fn verify_fails_when_store_file_is_empty() {
     assert!(stderr.contains("error: store file has no entries"));
 }
 
-/// `list --pretty` should print a header row followed by one line per PATH segment.
+/// Default output should print a header row followed by one line per PATH segment.
 #[test]
 fn list_pretty_shows_header_and_segments() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
     let mut cmd = test_cmd(dir, "/usr/bin:/bin");
-    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
     // Header row must be present.
@@ -1863,14 +1870,14 @@ fn list_pretty_shows_header_and_segments() {
     assert!(lines.iter().any(|l| l.contains("/bin")));
 }
 
-/// `list --pretty` should include an index column and a type column.
+/// Default output should include an index column and a type column.
 #[test]
 fn list_pretty_includes_index_and_type_columns() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
     let mut cmd = test_cmd(dir, "/usr/bin:/opt/homebrew/bin:/tmp");
-    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    let out = get_stdout(&mut cmd);
 
     assert!(out.contains("#"));
     assert!(out.contains("PATH"));
@@ -1888,7 +1895,7 @@ fn list_pretty_includes_index_and_type_columns() {
         .any(|line| line.contains("3") && line.contains("/tmp")));
 }
 
-/// `list --pretty` should show `[protected]` for protected system and store entries.
+/// Default output should show `[protected]` for protected system and store entries.
 #[test]
 fn list_pretty_marks_protected_paths_in_type_column() {
     let temp = tempdir().unwrap();
@@ -1896,7 +1903,7 @@ fn list_pretty_marks_protected_paths_in_type_column() {
     fs::write(dir.join(".path"), "'/opt/locked' [locked] (auto,protect)\n").unwrap();
 
     let mut cmd = test_cmd(dir, "/bin:/opt/locked");
-    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    let out = get_stdout(&mut cmd);
 
     let system_line = out.lines().find(|line| line.contains("/bin")).unwrap();
     assert!(system_line.contains("system [protected]"));
@@ -1908,14 +1915,14 @@ fn list_pretty_marks_protected_paths_in_type_column() {
     assert!(stored_line.contains("[protected]"));
 }
 
-/// `list --pretty` should resolve names from the built-in system path list.
+/// Default output should resolve names from the built-in system path list.
 #[test]
 fn list_pretty_resolves_system_path_names() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
     let mut cmd = test_cmd(dir, "/usr/bin:/bin:/sbin");
-    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
     assert!(out.contains("usrbin"));
@@ -1923,7 +1930,7 @@ fn list_pretty_resolves_system_path_names() {
     assert!(out.contains("syssbin"));
 }
 
-/// `list --pretty` should resolve names for known non-system extra paths.
+/// Default output should resolve names for known non-system extra paths.
 #[test]
 fn list_pretty_resolves_known_extra_path_names() {
     let temp = tempdir().unwrap();
@@ -1936,7 +1943,7 @@ fn list_pretty_resolves_known_extra_path_names() {
 
     let mut cmd = test_cmd(dir, &path_env);
     cmd.env("HOME", home);
-    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
     assert!(out.contains("homebrewbin"));
@@ -1945,7 +1952,7 @@ fn list_pretty_resolves_known_extra_path_names() {
     assert!(out.contains("pipx"));
 }
 
-/// `list --pretty` should resolve names from stored entries in the store file.
+/// Default output should resolve names from stored entries in the store file.
 #[test]
 fn list_pretty_resolves_stored_entry_names() {
     let temp = tempdir().unwrap();
@@ -1957,7 +1964,7 @@ fn list_pretty_resolves_stored_entry_names() {
     add_cmd.assert().success();
 
     let mut cmd = test_cmd(dir, "/tmp:/usr/bin");
-    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
     // /tmp should appear with its stored name.
@@ -1969,14 +1976,14 @@ fn list_pretty_resolves_stored_entry_names() {
     assert!(usrbin_line.contains("usrbin"));
 }
 
-/// `list --pretty` should leave the name column blank for unknown PATH segments.
+/// Default output should leave the name column blank for unknown PATH segments.
 #[test]
 fn list_pretty_leaves_name_blank_for_unknown_segments() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
     let mut cmd = test_cmd(dir, "/some/unknown/path");
-    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
     // The segment must appear.
@@ -1992,14 +1999,14 @@ fn list_pretty_leaves_name_blank_for_unknown_segments() {
     );
 }
 
-/// `list --pretty` with an empty PATH should print only header rows.
+/// Default output with an empty PATH should print only header rows.
 #[test]
 fn list_pretty_with_empty_path_prints_only_table_header() {
     let temp = tempdir().unwrap();
     let dir = temp.path();
 
     let mut cmd = test_cmd(dir, "");
-    let out = get_stdout(cmd.arg("list").arg("--pretty"));
+    let out = get_stdout(&mut cmd);
     assert_pretty_output_has_unique_names(&out);
 
     let lines: Vec<&str> = out.lines().collect();
@@ -2041,8 +2048,8 @@ fn restore_succeeds_with_malformed_store() {
 
 /// Default `path` output should succeed even with a malformed store file.
 ///
-/// Store validation is skipped for the default command (print current PATH)
-/// since it doesn't use the store.
+/// Store validation is skipped for the default command so malformed store
+/// entries do not block pretty PATH output.
 #[test]
 fn default_path_output_succeeds_with_malformed_store() {
     let temp = tempdir().unwrap();
@@ -2057,8 +2064,10 @@ fn default_path_output_succeeds_with_malformed_store() {
     let out_str = String::from_utf8_lossy(&output);
 
     // Should output the current PATH despite malformed store.
-    assert!(out_str.contains("export PATH="));
-    assert!(out_str.contains("test:path"));
+    assert!(out_str.contains("#"));
+    assert!(out_str.contains("PATH"));
+    assert!(out_str.contains("test"));
+    assert!(out_str.contains("path"));
 }
 
 /// `path add` should still validate the store file and fail on malformed entries.

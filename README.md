@@ -72,7 +72,24 @@ Global option:
 
 ### Commands
 
-- `path` — display current PATH
+- `path` — display the current PATH as a formatted table
+  - Each segment of the active PATH is printed on its own line.
+  - Column 1 (`#`): 1-based row number.
+  - Column 2 (`PATH`): the directory path.
+  - Column 3 (`TYPE`): `system` for built-in system paths, `known` for known extra paths, blank for others.
+  - Column 4 (`NAME`): resolved first from the store file, then from the built-in system/known path lists; blank when no name is known.
+  - Protected entries show `[protected]` in the `TYPE` column.
+  - Column widths are fitted to the widest value in each column.
+
+  ```
+  #  PATH                TYPE                NAME
+  -  ------------------  ------------------  -----------
+  1  /usr/local/bin      system [protected]  usrlocalbin
+  2  /usr/bin            system [protected]  usrbin
+  3  /bin                system [protected]  sysbin
+  4  /home/user/mytools
+  ```
+
 - `path add <location-or-name> [name]` — append to PATH.
   - If `<location-or-name>` matches a stored short name, that stored location is used.
   - Otherwise it must be an absolute path (`/…`) or dot-relative (`./…`, `../…`).
@@ -101,23 +118,6 @@ Global option:
   - If the argument matches a stored short name, that entry is deleted.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`), and matching stored locations are deleted.
 - `path list` — show all saved entries from the configured store file
-- `path list --pretty` — display the current PATH as a formatted table
-  - Each segment of the active PATH is printed on its own line.
-  - Column 1 (`#`): 1-based row number.
-  - Column 2 (`PATH`): the directory path.
-  - Column 3 (`TYPE`): `system` for built-in system paths, `known` for known extra paths, blank for others.
-  - Column 4 (`NAME`): resolved first from the store file, then from the built-in system/known path lists; blank when no name is known.
-  - Protected entries show `[protected]` in the `TYPE` column.
-  - Column widths are fitted to the widest value in each column.
-
-  ```
-  #  PATH                TYPE                NAME
-  -  ------------------  ------------------  -----------
-  1  /usr/local/bin      system [protected]  usrlocalbin
-  2  /usr/bin            system [protected]  usrbin
-  3  /bin                system [protected]  sysbin
-  4  /home/user/mytools
-  ```
 
 - `path load` — apply all stored entries marked `auto` to PATH
   - Entries with option `pre` are prepended.
@@ -162,7 +162,7 @@ path delete home                     # delete stored entry from .path by name
 path load                            # add only entries marked auto (usually automatic at shell startup)
 path verify                          # validate .path contents and report status
 path restore                         # restore built-in protected system paths to PATH
-path list --pretty                   # show current PATH as a table with index, type, and names
+path                                 # show current PATH as a table with index, type, and names
 
 # invalid unless "foo" is a stored name
 path add foo

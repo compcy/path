@@ -173,7 +173,7 @@ fn find_system_path_by_location(location: &str) -> Option<&'static PathEntry> {
         .find(|entry| strip_trailing_slash(&entry.location) == strip_trailing_slash(location))
 }
 
-/// Known non-system tool paths recognised for display by `list --pretty`.
+/// Known non-system tool paths recognised for default pretty output.
 ///
 /// These entries are unprotected and are not managed by `path restore`. The
 /// `$HOME`-relative entries are expanded from the current environment at first call,
@@ -899,14 +899,7 @@ fn build_cli() -> App<'static, 'static> {
                 ),
         )
         .subcommand(
-            SubCommand::with_name("list")
-                .about("List entries stored in the configured store file")
-                .arg(
-                    Arg::with_name("pretty")
-                        .long("pretty")
-                        .help("Print PATH entries as a formatted four-column table (#, PATH, TYPE, NAME)")
-                        .takes_value(false),
-                ),
+            SubCommand::with_name("list").about("List entries stored in the configured store file"),
         )
         .subcommand(
             SubCommand::with_name("load")
@@ -1150,6 +1143,87 @@ fn format_list_entry(entry: &PathEntry) -> String {
     )
 }
 
+/// Print the current PATH as a formatted table with index, type, and name columns.
+fn print_pretty_path_output(current: &str, entries: &[PathEntry]) {
+    let segments: Vec<&str> = if current.is_empty() {
+        Vec::new()
+    } else {
+        current.split(':').collect()
+    };
+
+    let names: Vec<String> = segments
+        .iter()
+        .map(|seg| resolve_segment_name(seg, entries))
+        .collect();
+
+    let types: Vec<String> = segments
+        .iter()
+        .map(|seg| resolve_segment_type(seg, entries))
+        .collect();
+
+    let index_col_width = segments.len().to_string().len().max("#".len());
+
+    let path_col_width = segments
+        .iter()
+        .map(|s| s.len())
+        .max()
+        .unwrap_or(0)
+        .max("PATH".len());
+
+    let type_col_width = types
+        .iter()
+        .map(|t| t.len())
+        .max()
+        .unwrap_or(0)
+        .max("TYPE".len());
+
+    let name_col_width = names
+        .iter()
+        .map(|n| n.len())
+        .max()
+        .unwrap_or(0)
+        .max("NAME".len());
+
+    println!(
+        "{:<index_width$}  {:<path_width$}  {:<type_width$}  NAME",
+        "#",
+        "PATH",
+        "TYPE",
+        index_width = index_col_width,
+        path_width = path_col_width,
+        type_width = type_col_width
+    );
+    println!(
+        "{:-<index_width$}  {:-<path_width$}  {:-<type_width$}  {:-<name_width$}",
+        "",
+        "",
+        "",
+        "",
+        index_width = index_col_width,
+        path_width = path_col_width,
+        type_width = type_col_width,
+        name_width = name_col_width
+    );
+
+    for (index, ((segment, entry_type), name)) in segments
+        .iter()
+        .zip(types.iter())
+        .zip(names.iter())
+        .enumerate()
+    {
+        println!(
+            "{:<index_width$}  {:<path_width$}  {:<type_width$}  {}",
+            index + 1,
+            segment,
+            entry_type,
+            name,
+            index_width = index_col_width,
+            path_width = path_col_width,
+            type_width = type_col_width
+        );
+    }
+}
+
 /// Handle the `add` subcommand.
 ///
 /// This resolves named entries, validates path shape, optionally persists a
@@ -1370,97 +1444,7 @@ fn handle_delete(delete_matches: &ArgMatches, store_file: &Path) {
 }
 
 /// Handle the `list` subcommand by printing all stored entries.
-///
-/// When `--pretty` is given, enumerates the current PATH segments in a
-/// table with index, path, type, and name columns, using names resolved
-/// from the store file and the built-in system path list.
-fn handle_list(list_matches: &ArgMatches, store_file: &Path) {
-    if list_matches.is_present("pretty") {
-        let current = env::var("PATH").unwrap_or_default();
-
-        let entries = load_entries_or_warn(store_file, "failed to load store file for --pretty")
-            .unwrap_or_default();
-
-        let segments: Vec<&str> = if current.is_empty() {
-            Vec::new()
-        } else {
-            current.split(':').collect()
-        };
-
-        let names: Vec<String> = segments
-            .iter()
-            .map(|seg| resolve_segment_name(seg, &entries))
-            .collect();
-
-        let types: Vec<String> = segments
-            .iter()
-            .map(|seg| resolve_segment_type(seg, &entries))
-            .collect();
-
-        let index_col_width = segments.len().to_string().len().max("#".len());
-
-        let path_col_width = segments
-            .iter()
-            .map(|s| s.len())
-            .max()
-            .unwrap_or(0)
-            .max("PATH".len());
-
-        let type_col_width = types
-            .iter()
-            .map(|t| t.len())
-            .max()
-            .unwrap_or(0)
-            .max("TYPE".len());
-
-        let name_col_width = names
-            .iter()
-            .map(|n| n.len())
-            .max()
-            .unwrap_or(0)
-            .max("NAME".len());
-
-        println!(
-            "{:<index_width$}  {:<path_width$}  {:<type_width$}  NAME",
-            "#",
-            "PATH",
-            "TYPE",
-            index_width = index_col_width,
-            path_width = path_col_width,
-            type_width = type_col_width
-        );
-        println!(
-            "{:-<index_width$}  {:-<path_width$}  {:-<type_width$}  {:-<name_width$}",
-            "",
-            "",
-            "",
-            "",
-            index_width = index_col_width,
-            path_width = path_col_width,
-            type_width = type_col_width,
-            name_width = name_col_width
-        );
-
-        for (index, ((segment, entry_type), name)) in segments
-            .iter()
-            .zip(types.iter())
-            .zip(names.iter())
-            .enumerate()
-        {
-            println!(
-                "{:<index_width$}  {:<path_width$}  {:<type_width$}  {}",
-                index + 1,
-                segment,
-                entry_type,
-                name,
-                index_width = index_col_width,
-                path_width = path_col_width,
-                type_width = type_col_width
-            );
-        }
-        return;
-    }
-
+fn handle_list(store_file: &Path) {
     let store_exists = store_file.exists();
 
     let entries = load_entries_or_exit(store_file);
@@ -1476,6 +1460,18 @@ fn handle_list(list_matches: &ArgMatches, store_file: &Path) {
     for entry in entries {
         println!("{}", format_list_entry(&entry));
     }
+}
+
+/// Print the current PATH value as a formatted table.
+fn print_pretty_current_path(store_file: &Path) {
+    let current = env::var("PATH").unwrap_or_default();
+    let entries = load_entries_or_warn(
+        store_file,
+        "failed to load store file for pretty PATH output",
+    )
+    .unwrap_or_default();
+
+    print_pretty_path_output(&current, &entries);
 }
 
 /// Handle the `load` subcommand.
@@ -1592,18 +1588,10 @@ fn resolve_segment_type(segment: &str, entries: &[PathEntry]) -> String {
     String::new()
 }
 
-/// Print the current PATH value as a shell export statement.
-fn print_current_path() {
-    match env::var("PATH") {
-        Ok(path) => println!("{}", format_export_path(&path)),
-        Err(error) => eprintln!("Failed to read PATH: {}", error),
-    }
-}
-
 /// Program entry point.
 ///
 /// Validates stored entries for subcommands that need them, dispatches subcommands,
-/// and falls back to printing the current PATH when no subcommand is provided.
+/// and falls back to pretty-printing the current PATH when no subcommand is provided.
 fn main() {
     let matches = build_cli().get_matches();
     let store_file = resolve_store_file_path(&matches);
@@ -1614,7 +1602,7 @@ fn main() {
     }
 
     // Subcommands that need the store file: add, remove, delete, list, load.
-    // Store validation is skipped for restore and default (print_current_path),
+    // Store validation is skipped for restore and default pretty output,
     // which don't use the store, so a malformed store file won't block recovery.
     let needs_store = matches.subcommand_matches("add").is_some()
         || matches.subcommand_matches("remove").is_some()
@@ -1643,8 +1631,8 @@ fn main() {
         return;
     }
 
-    if let Some(list_matches) = matches.subcommand_matches("list") {
-        handle_list(list_matches, &store_file);
+    if matches.subcommand_matches("list").is_some() {
+        handle_list(&store_file);
         return;
     }
 
@@ -1658,7 +1646,7 @@ fn main() {
         return;
     }
 
-    print_current_path();
+    print_pretty_current_path(&store_file);
 }
 
 #[cfg(test)]
