@@ -1,40 +1,73 @@
 # path
 
-`path` is a simple command-line utility for inspecting and manipulating the
-`PATH` environment variable. It also keeps a local record of added entries in
-a plain-text store file (default: `$HOME/.path`), with optional names and
-autoset and protection flags.
+`path` is a command-line utility for inspecting and managing your shell `PATH`.
+It tracks named path entries in a plain-text store file (default `~/.path`) and
+can automatically apply them on each new terminal session.
 
-Because a child process cannot directly modify its parent shell environment,
-PATH-mutating commands output a shell assignment like
-`export PATH='...new value...'`.
+Because a child process cannot modify its parent shell environment,
+PATH-mutating commands print a shell assignment (`export PATH='...'`).
+Use the companion wrapper script (see [Shell Integration](#shell-integration))
+so the shell function applies those changes automatically.
 
-Running `path` with no subcommand displays the current PATH as a
-human-readable formatted table.
+## Sample Output
 
-The default `path` command prints a formatted PATH table (not an `export` line).
+Running `path` with no subcommand shows your current PATH as a formatted table:
 
-For a persistent setup, source the wrapper script from your shell rc file
-(`~/.zshrc`, `~/.bashrc`, etc.).
+```
+#   PATH                     NAME          TYPE
+--  -----------------------  ------------  ------------------
+1   /opt/homebrew/bin        homebrewbin   known
+2   /usr/local/bin           usrlocalbin   system [protected]
+3   /usr/bin                 usrbin        system [protected]
+4   /bin                     sysbin        system [protected]
+5   /usr/sbin                usrsbin       system [protected]
+6   /sbin                    syssbin       system [protected]
+7   /home/alice/.cargo/bin   cargo
+```
+
+- **#** — 1-based position in PATH
+- **NAME** — resolved from the store file, or from the built-in known/system path list; blank when unknown
+- **TYPE** — `system` for protected system paths, `known` for recognized extras; `[protected]` appended when removal is blocked
+
+Column widths adjust to the widest value in each column. If the store file is
+missing, output still succeeds and prints a warning to stderr.
+
+## Installation
+
+### Install with Cargo
 
 ```sh
-# ~/.zshrc (or ~/.bashrc)
+cargo install --path .
+```
+
+### Build and run directly
+
+```sh
+cargo build
+./target/debug/path
+```
+
+### Shell Integration
+
+To have PATH mutations take effect in your current shell automatically, source
+the wrapper script from your rc file:
+
+```sh
+# ~/.zshrc or ~/.bashrc
 . "$HOME/git/path/path-wrapper.sh"
 ```
 
-Sourcing `path-wrapper.sh` defines the shell function and immediately runs
-`path load`, so each new terminal session loads auto entries from `.path`.
+Sourcing the wrapper defines a `path` shell function and immediately runs
+`path load`, applying your stored auto entries on each new terminal session.
 
-If `path` is not yet on PATH when your rc file runs, set `PATH_CLI_BIN` before
-sourcing the wrapper:
+If `path` is not yet on PATH when your rc file runs, set `PATH_CLI_BIN` first:
 
 ```sh
 PATH_CLI_BIN="$HOME/git/path/target/debug/path"
 . "$HOME/git/path/path-wrapper.sh"
 ```
 
-For stricter wrapper hardening, you can optionally pin trusted install
-locations and the binary checksum:
+For stricter hardening, you can pin trusted install locations and checksum the binary:
 
 ```sh
 PATH_CLI_BIN="/opt/homebrew/bin/path"
@@ -43,190 +76,210 @@ PATH_CLI_SHA256="$(shasum -a 256 "$PATH_CLI_BIN" | awk '{print $1}')"
 . "$HOME/git/path/path-wrapper.sh"
 ```
 
-`PATH_CLI_ALLOWLIST` is a colon-delimited list of absolute paths. Each entry
-can be an exact binary path (for example `/usr/local/bin/path`) or an absolute
-directory prefix (for example `/opt/homebrew/bin`).
+`PATH_CLI_ALLOWLIST` is a colon-delimited list of absolute paths; each entry
+can be an exact binary path or a directory prefix. `PATH_CLI_SHA256` must be
+the 64-character hex SHA-256 digest — if it does not match, the wrapper refuses
+to run.
 
-`PATH_CLI_SHA256`, when set, must be the exact 64-character hex SHA-256 digest
-for the resolved binary path. If it does not match, the wrapper refuses to run.
+## Simple Usage
 
-Move any or your paths from your rc file into .path:
-export PATH="$HOME/.cargo/bin:$PATH"
+These commands affect only the current shell session and do not persist anything
+to the store file.
 
-```sh
-path add $HOME/.cargo/bin cargo
-```
-
-## Usage
+### View PATH
 
 ```sh
-# build and run with Cargo
-cargo run -- [--file <path>] [SUBCOMMAND]
-
-# one-off usage without the wrapper
-eval "$(path add /some/dir mydir)"
-
-# after rc-file setup, this updates PATH directly
-path add /some/dir mydir
+path
 ```
 
-Global option:
-
-- `--file <path>` — use a specific store file instead of the default `$HOME/.path`.
-- `-f` is not a global option; it is only valid as `path remove -f ...`.
-
-### Commands
-
-- `path` — display the current PATH as a formatted table
-  - Each segment of the active PATH is printed on its own line.
-  - Column 1 (`#`): 1-based row number.
-  - Column 2 (`PATH`): the directory path.
-  - Column 3 (`NAME`): resolved first from the store file, then from the built-in system/known path lists; blank when no name is known.
-  - Column 4 (`TYPE`): `system` for built-in system paths, `known` for known extra paths, blank for others.
-  - Protected entries show `[protected]` in the `TYPE` column.
-  - Column widths are fitted to the widest value in each column.
-  - If the configured store file is missing, output still succeeds and prints a warning to stderr.
-  - If store entries are malformed/invalid, output still succeeds and prints warnings/errors to stderr after the table.
-
-  ```
-  #  PATH                NAME         TYPE
-  -  ------------------  -----------  ------------------
-  1  /usr/local/bin      usrlocalbin  system [protected]
-  2  /usr/bin            usrbin       system [protected]
-  3  /bin                sysbin       system [protected]
-  4  /home/user/mytools
-  ```
-
-- `path add <location-or-name> [name]` — append to PATH.
-  - If `<location-or-name>` matches a stored short name, that stored location is used.
-  - Otherwise it must be an absolute path (`/…`) or dot-relative (`./…`, `../…`).
-  - Quote path arguments that contain spaces (for example `"./my tools"`).
-  - Path arguments must not contain `:`.
-  - Relative path arguments are canonicalized once (for example `.` becomes the absolute current directory).
-  - Absolute path arguments are used as provided.
-  - Trailing `/` is stripped from path arguments (except `/` itself).
-  - If the path exists, it must be a directory (files are rejected).
-  - If `name` is provided, it must be alphanumeric and unique.
-  - Built-in system-path names are reserved and cannot be used for stored entries: `sysbin`, `syssbin`, `usrbin`, `usrsbin`, `usrlocalbin`, `usrlocalsbin`.
-  - Use `--noauto` to store a named entry that should not be included by `path load`.
-  - Use `--protect` to store a named entry that `path remove` must not remove by name or by direct path.
-  - Only entries with an explicit `name` are written to the configured store file.
-  - Existing PATH entries are not duplicated for equivalent trailing-slash forms (for example `/usr/local/bin` and `/usr/local/bin/`).
-- `path add --pre <location-or-name> [name]` — prepend instead of append
-  - When `name` is provided, the stored entry records `pre` in its options so `path load` will prepend it in future shells.
-- `path remove <location-or-name>` — remove from PATH only
-  - If the argument matches a stored short name, its location is removed from PATH.
-  - Stored entries marked `protect` fail instead of being removed, whether addressed by stored name or direct path.
-  - Built-in protected system paths also fail instead of being removed, whether addressed by reserved name (`sysbin`, `syssbin`, `usrbin`, `usrsbin`, `usrlocalbin`, `usrlocalsbin`) or by direct path.
-  - Use `--force` (or `-f`) to remove protected store entries or protected built-in system paths from the current PATH output.
-  - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`).
-  - This command does not modify `.path`.
-- `path delete <location-or-name>` — delete from the configured store file only
-  - If the argument matches a stored short name, that entry is deleted.
-  - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`), and matching stored locations are deleted.
-- `path list` — show all saved entries from the configured store file
-
-- `path load` — apply all stored entries marked `auto` to PATH
-  - Entries with option `pre` are prepended.
-  - Entries without `pre` are appended (post behavior by default).
-  - Unknown alphabetic option tokens produce a warning that includes the line number, the original line, and the unknown option; recognized options on that same line still take effect.
-  - This runs automatically when `path-wrapper.sh` is sourced (for example at shell startup from your rc file).
-- `path verify` — validate configured store entries and print `Path file is valid.` when validation passes
-  - If the configured store file does not exist or has no entries, it fails.
-  - Unknown alphabetic option tokens are reported with the line number, the original line, and the unknown option, and `path verify` exits non-zero.
-  - On validation failure, it prints the failure details and exits non-zero.
-- `path restore` — restore a built-in set of protected system paths into PATH without persisting them
-  - Restores: `/bin` (`sysbin`), `/sbin` (`syssbin`), `/usr/bin` (`usrbin`), `/usr/sbin` (`usrsbin`), `/usr/local/bin` (`usrlocalbin`), `/usr/local/sbin` (`usrlocalsbin`).
-  - Missing system paths are appended to the current PATH in that order.
-
-**Store validation note:** commands that validate/consume stored entries (`path add`, `path remove`, `path delete`, `path list`, `path load`, `path verify`) abort if they find:
-
-- a nameless entry,
-- a relative or non-canonical-looking stored location,
-- a stored location containing `:`,
-- a non-alphanumeric name,
-- duplicate names.
-
-Unknown alphabetic option tokens are warnings during normal store loading, but they are fatal under `path verify`.
-
-`path` (default pretty output) is intentionally more tolerant: it still prints the PATH table and then emits store warnings/errors to stderr.
-
-Missing filesystem locations only produce warnings (they are not auto-removed).
-
-Example:
+### Add to PATH
 
 ```sh
-path add /usr/local/bin             # append only; not stored (no explicit name)
-path add /home/$USER/.bin home      # store with short name "home"
-path add "./my tools" mytools       # path contains a space
-path add /opt/internal/bin internal --noauto  # store but do not include in `path load`
-path add /opt/locked/bin locked --protect      # store and prevent `path remove locked`
-path add --pre /opt/custom/bin      # prepend to PATH instead of append
-path add home                        # uses stored name "home" if present
-path remove /home/$USER/.bin         # remove by path
-path remove home                     # remove from PATH by stored short name
-path remove --force locked           # force-remove a protected stored entry from PATH
-path remove -f /bin                  # force-remove a protected built-in system path
-path delete home                     # delete stored entry from .path by name
-path load                            # add only entries marked auto (usually automatic at shell startup)
-path verify                          # validate .path contents and report status
-path restore                         # restore built-in protected system paths to PATH
-path                                 # show current PATH as a table with index, type, and names
+# Append a directory to PATH
+path add /usr/local/mytools
 
-# invalid unless "foo" is a stored name
-path add foo
+# Prepend a directory to PATH
+path add --pre /usr/local/mytools
 
-# invalid because .path is a file, not a directory
-path add .path
+# Resolve and append the current directory
+path add .
 ```
 
-Entries are persisted to `$HOME/.path` by default (or the file passed with
-`--file`), but only for entries where you supplied an explicit name. New lines are written as
-`'location' [name] (options)` with fields separated by whitespace, where options
-can include `auto` or `noauto`, optional placement `pre`, and optional protection `protect`.
-If `pre` is not specified, `post` (append) behavior is assumed.
-Unknown or misspelled option tokens (for example `autoo`) are invalid and cause validation to fail.
-Older unwrapped forms such as `location name auto` are treated as malformed.
-If the third field is missing, it is treated as `auto`. (The name field is
-mandatory, and the tool refuses to start if it finds a line without a valid
-name.) A trailing `/` on stored paths is normalized away while reading
-(except for `/`). The tool reads and writes this file
-automatically when adding.
+Arguments must be an absolute path (`/…`) or dot-relative (`./…`, `../…`).
+Trailing `/` is stripped, relative paths are canonicalized, and the path must
+be a directory if it already exists. Paths must not contain `:`.
 
-Locations are enclosed in single quotes. Literal `'` and `\\` inside a location
-are escaped as `\\'` and `\\\\`. For example:
+### Remove from PATH
+
+```sh
+# Remove by path
+path remove /usr/local/mytools
+
+# Force-remove a protected path
+path remove --force /bin
+path remove -f /bin
+```
+
+`path remove` does not modify the store file.
+
+## Stored Entries
+
+Named entries are persisted to `~/.path` and reloaded automatically in future
+shells (via `path load`). Only entries with an explicit name are written to the
+store file.
+
+### Add a Named Entry
+
+```sh
+# Append and store with a short name
+path add /home/$USER/.cargo/bin cargo
+
+# Prepend and store (load will also prepend in future shells)
+path add --pre /opt/custom/bin custom
+
+# Store but exclude from automatic loading
+path add /opt/tools/bin tools --noauto
+
+# Store and prevent removal by path remove
+path add /opt/locked/bin locked --protect
+```
+
+Names must be alphanumeric and unique. The built-in system-path names
+(`sysbin`, `syssbin`, `usrbin`, `usrsbin`, `usrlocalbin`, `usrlocalsbin`) are
+reserved and cannot be used for stored entries.
+
+You can also use a stored name as shorthand for its location:
+
+```sh
+path add cargo    # equivalent to: path add /home/$USER/.cargo/bin
+```
+
+### List Stored Entries
+
+```sh
+path list
+```
+
+### Delete a Stored Entry
+
+Removes the entry from `~/.path` but does not change the current PATH:
+
+```sh
+path delete cargo                    # by name
+path delete /home/alice/.cargo/bin   # by path
+```
+
+### Load Stored Entries
+
+Adds all `auto` entries from `~/.path` to the current PATH. Entries with `pre`
+are prepended; all others are appended.
+
+```sh
+path load
+```
+
+This runs automatically at shell startup when the wrapper is sourced.
+Unknown option tokens in the store file produce a warning but do not stop loading.
+
+### Verify the Store File
+
+Validates `~/.path` and reports any errors:
+
+```sh
+path verify
+```
+
+Prints `Path file is valid.` on success, or error details and exits non-zero on
+failure. Unknown option tokens that are only warnings during `path load` are
+**fatal** under `path verify`.
+
+## Manual File Editing
+
+You can edit `~/.path` directly in any text editor. The format is:
 
 ```text
-'/opt/my tools' [tools] (auto)
-'/opt/my tools' [tools] (auto,pre)
-'/opt/locked tools' [locked] (auto,protect)
+# layout: '<location>' [<name>] (<options>)
+'/home/alice/.cargo/bin' [cargo] (auto)
+'/opt/custom/bin' [custom] (auto,pre)
+'/opt/locked/bin' [locked] (auto,protect)
+'/opt/tools/bin' [tools] (noauto)
 ```
 
-You can also install a release build and invoke it directly:
+Valid options are `auto`, `noauto`, `pre`, and `protect`. A missing options
+field defaults to `auto`. Locations are enclosed in single quotes; literal `'`
+and `\` are escaped as `\'` and `\\`.
+
+> **After editing, always run `path verify` to catch mistakes before they affect your shell.**
+
+## Using a Specific Store File
+
+The global `--file` option points any command at an alternate store file
+instead of the default `~/.path`:
 
 ```sh
-cargo install --path .
-path add /some/dir
+path --file /path/to/myfile.path list
+path --file /path/to/myfile.path load
+path --file /path/to/myfile.path verify
 ```
 
-## CI checks
+This is useful for managing multiple PATH profiles or testing changes before
+applying them. Note: `-f` is **not** a global alias for `--file`; it is only
+valid as `path remove -f`.
 
-The CI workflow builds, tests, and validates documentation coverage for private
-and public items. To run the docs check locally:
+## Restoring System Paths
+
+`path restore` adds the built-in set of protected system paths to the current
+PATH without storing them:
 
 ```sh
+path restore
+```
+
+Restored paths (in order): `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`,
+`/usr/local/bin`, `/usr/local/sbin`.
+
+## Store Validation Rules
+
+Commands that read stored entries (`add`, `remove`, `delete`, `list`, `load`,
+`verify`) abort if they encounter:
+
+- a nameless entry
+- a relative or non-canonical stored location
+- a stored location containing `:`
+- a non-alphanumeric name
+- duplicate names
+
+The default `path` table view is intentionally tolerant — it still prints the
+PATH table and emits store warnings/errors to stderr afterward. Missing
+filesystem locations produce warnings only and are never auto-removed.
+
+## Command Reference
+
+| Command                       | Description                                   |
+| ----------------------------- | --------------------------------------------- |
+| `path`                        | Show current PATH as a formatted table        |
+| `path add <dir> [name]`       | Append to PATH; store if name given           |
+| `path add --pre <dir> [name]` | Prepend to PATH; store if name given          |
+| `path remove <dir-or-name>`   | Remove from current PATH only                 |
+| `path delete <dir-or-name>`   | Delete from store file only                   |
+| `path list`                   | Show all stored entries                       |
+| `path load`                   | Apply all auto entries from the store to PATH |
+| `path verify`                 | Validate store file                           |
+| `path restore`                | Restore built-in system paths to PATH         |
+
+## CI Checks
+
+The CI workflow builds, tests, and validates documentation coverage. To run
+checks locally:
+
+```sh
+# Documentation coverage check
 RUSTDOCFLAGS="-D warnings -W missing-docs" cargo doc --no-deps --document-private-items
-```
 
-To run wrapper security regression tests locally:
-
-```sh
+# Wrapper security regression tests
 sh tests/path-wrapper-security.sh
-```
 
-To run comprehensive path-wrapper utility function tests:
-
-```sh
+# Wrapper utility function tests
 sh tests/path-wrapper-functions.sh
 ```
 

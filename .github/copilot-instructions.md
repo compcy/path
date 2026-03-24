@@ -63,6 +63,20 @@
 - `README.md` update is mandatory even for "small" UX changes (for example output order, warning timing, fallback behavior, or default-mode behavior).
 - Before reporting work complete, verify that each user-visible change has matching README text and at least one example/section reflecting the new behavior.
 - If implementation changed and README was not updated where needed, the change is incomplete and must not be reported as done.
+- The `README.md` follows a defined section order — do not reorganize it; only add content within the appropriate section:
+  1. **Introduction** — one-paragraph description and sample `path` table output.
+  2. **Installation** — Cargo install, direct build, and Shell Integration (wrapper setup).
+  3. **Simple Usage** — ephemeral commands that do not write to the store file (`path`, `path add` without a name, `path remove`).
+  4. **Stored Entries** — commands that read or write the store file (`path add <name>`, `path list`, `path delete`, `path load`, `path verify`). The `path verify` callout must stay in this section.
+  5. **Manual File Editing** — store file format, valid options, escaping rules. Must always include a prominent warning to run `path verify` after editing.
+  6. **Using a Specific Store File** — the `--file` global option and when to use it.
+  7. **Restoring System Paths** — `path restore` and the list of restored paths.
+  8. **Store Validation Rules** — what makes an entry invalid and how the default `path` command differs from strict commands.
+  9. **Command Reference** — summary table of all commands.
+  10. **CI Checks** — local commands to reproduce CI.
+  11. **License**
+- Keep individual sections concise; prefer short paragraphs and illustrative code blocks over long bullet lists.
+- When adding a new command, add it to **Command Reference** (section 9) and to the most relevant numbered section above.
 - When adding or renaming test fixtures, keep fixture documentation synchronized (for example `tests/paths/README.md`) and add or update tests that fail when docs and fixture files diverge.
 - Stored locations must be absolute, canonical-looking paths (no `.`/`..`, no trailing slash except `/`, no `:` or shell metacharacters).
 - The store file always begins with the header comment: `# layout: '<location>' [<name>] (<options>)`.
