@@ -71,3 +71,15 @@ cargo clippy -- -D warnings || {
     echo "clippy found issues; fix them before committing." >&2
     exit 1
 }
+
+echo "Running path-wrapper utility function tests..."
+sh tests/path-wrapper-functions.sh >/dev/null || {
+    echo "path-wrapper function tests failed." >&2
+    exit 1
+}
+
+echo "Running path-wrapper security tests..."
+sh tests/path-wrapper-security.sh >/dev/null || {
+    echo "path-wrapper security tests failed." >&2
+    exit 1
+}
