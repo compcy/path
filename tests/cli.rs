@@ -2124,6 +2124,24 @@ fn default_path_output_succeeds_with_malformed_store() {
     assert!(stderr.contains("error: invalid stored location"));
 }
 
+/// Malformed nameless entries should not mask built-in pretty names.
+#[test]
+fn default_path_ignores_nameless_malformed_entry_for_name_resolution() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    let store = dir.join(".path");
+
+    // Unquoted malformed line parses as a nameless entry for /usr/bin.
+    fs::write(&store, "/usr/bin\n").unwrap();
+
+    let mut cmd = test_cmd(dir, "/usr/bin");
+    let assert = cmd.assert().success();
+    let out_str = String::from_utf8_lossy(&assert.get_output().stdout);
+
+    let name = pretty_output_name_for_path(&out_str, "/usr/bin").unwrap();
+    assert_eq!(name, "usrbin");
+}
+
 /// `path add` should still validate the store file and fail on malformed entries.
 ///
 /// Store validation still runs for commands that use the store, so users

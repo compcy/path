@@ -1719,7 +1719,7 @@ fn resolve_segment_name(segment: &str, entries: &[PathEntry]) -> String {
 
     if let Some(entry) = entries
         .iter()
-        .find(|e| strip_trailing_slash(&e.location) == normalized)
+        .find(|e| !e.name.is_empty() && strip_trailing_slash(&e.location) == normalized)
     {
         return entry.name.clone();
     }
