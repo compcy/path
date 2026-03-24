@@ -671,10 +671,12 @@ fn report_conflicting_options(store_file: &Path, diagnostic: &EntryDiagnostic) {
     eprintln!("error: {}", diagnostic.line);
 }
 
+// Collects parse warning messages into a vector for later reporting.
 fn collect_parse_warning_messages(parse_warnings: &[String]) -> Vec<String> {
     parse_warnings.to_vec()
 }
 
+// Gathers non-fatal store issues into a vector of user-facing warning messages.
 fn collect_store_issue_messages_nonfatal(
     store_file: &Path,
     entries: &[PathEntry],
