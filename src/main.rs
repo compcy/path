@@ -440,7 +440,7 @@ fn malformed_nameless_entry(location: &str, line_number: usize) -> PathEntry {
 fn parse_entry_line_with_diagnostic(
     line: &str,
     line_number: usize,
-) -> Option<(PathEntry, Option<EntryDiagnostic>)> {
+) -> Option<(PathEntry, Option<EntryDiagnostic>, Option<String>)> {
     let trimmed = line.trim();
 
     if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -458,21 +458,24 @@ fn parse_entry_line_with_diagnostic(
                     PathEntry::new(strip_trailing_slash(location), name)
                         .with_line_number(line_number),
                     None,
+                    None,
                 ),
-                (None, _) => {
-                    eprintln!(
+                (None, _) => (
+                    malformed_nameless_entry(location, line_number),
+                    None,
+                    Some(format!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
                         line_number
-                    );
-                    (malformed_nameless_entry(location, line_number), None)
-                }
-                (_, None) => {
-                    eprintln!(
+                    )),
+                ),
+                (_, None) => (
+                    malformed_nameless_entry(location, line_number),
+                    None,
+                    Some(format!(
                         "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
                         line_number
-                    );
-                    (malformed_nameless_entry(location, line_number), None)
-                }
+                    )),
+                ),
             }
         }
         [location, name, options] => {
@@ -494,45 +497,50 @@ fn parse_entry_line_with_diagnostic(
                         .diagnostic
                         .map(|kind| entry_diagnostic(line_number, line, kind));
 
-                    (entry, diagnostic)
+                    (entry, diagnostic, None)
                 }
-                (None, _, _) => {
-                    eprintln!(
+                (None, _, _) => (
+                    malformed_nameless_entry(location, line_number),
+                    None,
+                    Some(format!(
                         "warning: malformed entry at line {}: location must be wrapped in single quotes",
                         line_number
-                    );
-                    (malformed_nameless_entry(location, line_number), None)
-                }
-                (_, None, _) => {
-                    eprintln!(
+                    )),
+                ),
+                (_, None, _) => (
+                    malformed_nameless_entry(location, line_number),
+                    None,
+                    Some(format!(
                         "warning: malformed entry at line {}: name must be wrapped in '[' and ']'",
                         line_number
-                    );
-                    (malformed_nameless_entry(location, line_number), None)
-                }
-                (_, _, EntryOptionsParseResult::Malformed) => {
-                    eprintln!(
+                    )),
+                ),
+                (_, _, EntryOptionsParseResult::Malformed) => (
+                    malformed_nameless_entry(location, line_number),
+                    None,
+                    Some(format!(
                         "warning: malformed entry at line {}: options must be wrapped in '(' and ')'",
                         line_number
-                    );
-                    (malformed_nameless_entry(location, line_number), None)
-                }
+                    )),
+                ),
             }
         }
-        [location] => {
-            eprintln!(
+        [location] => (
+            malformed_nameless_entry(location, line_number),
+            None,
+            Some(format!(
                 "warning: malformed entry at line {}: missing required name field",
                 line_number
-            );
-            (malformed_nameless_entry(location, line_number), None)
-        }
-        _ => {
-            eprintln!(
+            )),
+        ),
+        _ => (
+            malformed_nameless_entry(trimmed, line_number),
+            None,
+            Some(format!(
                 "warning: malformed entry at line {}: expected '<location>' [<name>] (<options>) (or omit options to default to auto/post)",
                 line_number
-            );
-            (malformed_nameless_entry(trimmed, line_number), None)
-        }
+            )),
+        ),
     };
 
     Some(parsed)
@@ -540,7 +548,7 @@ fn parse_entry_line_with_diagnostic(
 
 #[cfg(test)]
 fn parse_entry_line(line: &str, line_number: usize) -> Option<PathEntry> {
-    parse_entry_line_with_diagnostic(line, line_number).map(|(entry, _)| entry)
+    parse_entry_line_with_diagnostic(line, line_number).map(|(entry, _, _)| entry)
 }
 
 /// Serialize an entry back into a line.
@@ -557,6 +565,7 @@ fn format_entry_line(entry: &PathEntry) -> String {
 struct LoadedEntries {
     entries: Vec<PathEntry>,
     diagnostics: Vec<EntryDiagnostic>,
+    parse_warnings: Vec<String>,
 }
 
 /// Load entries and parser diagnostics from the store file.
@@ -571,10 +580,15 @@ fn load_entries_with_diagnostics(store_file: &Path) -> io::Result<LoadedEntries>
 
     for (index, line) in reader.lines().enumerate() {
         let line = line?;
-        if let Some((entry, diagnostic)) = parse_entry_line_with_diagnostic(&line, index + 1) {
+        if let Some((entry, diagnostic, parse_warning)) =
+            parse_entry_line_with_diagnostic(&line, index + 1)
+        {
             loaded.entries.push(entry);
             if let Some(diagnostic) = diagnostic {
                 loaded.diagnostics.push(diagnostic);
+            }
+            if let Some(parse_warning) = parse_warning {
+                loaded.parse_warnings.push(parse_warning);
             }
         }
     }
@@ -655,6 +669,147 @@ fn report_conflicting_options(store_file: &Path, diagnostic: &EntryDiagnostic) {
         store_file.display()
     );
     eprintln!("error: {}", diagnostic.line);
+}
+
+fn collect_parse_warning_messages(parse_warnings: &[String]) -> Vec<String> {
+    parse_warnings.to_vec()
+}
+
+fn collect_store_issue_messages_nonfatal(
+    store_file: &Path,
+    entries: &[PathEntry],
+    diagnostics: &[EntryDiagnostic],
+) -> Vec<String> {
+    let mut messages = Vec::new();
+
+    for diagnostic in diagnostics {
+        match &diagnostic.kind {
+            EntryDiagnosticKind::UnknownOption { option } => {
+                messages.push(format!(
+                    "warning: unknown entry option '{}' at line {} in {}",
+                    option,
+                    diagnostic.line_number,
+                    store_file.display()
+                ));
+                messages.push(format!("warning: {}", diagnostic.line));
+            }
+            EntryDiagnosticKind::ConflictingOptions { left, right } => {
+                messages.push(format!(
+                    "error: conflicting entry options '{}' and '{}' at line {} in {}",
+                    left,
+                    right,
+                    diagnostic.line_number,
+                    store_file.display()
+                ));
+                messages.push(format!("error: {}", diagnostic.line));
+            }
+        }
+    }
+
+    if let Some(e) = entries.iter().find(|e| e.name.is_empty()) {
+        messages.push(format!(
+            "error: found nameless entry in {} at line {}: '{}'",
+            store_file.display(),
+            e.line_number,
+            e.location
+        ));
+    }
+
+    if let Some(e) = entries
+        .iter()
+        .find(|e| !is_store_location_canonical_like(&e.location))
+    {
+        messages.push(format!(
+            "error: invalid stored location '{}' at line {}: locations in {} must be absolute, canonical-looking, and must not contain ':'",
+            e.location,
+            e.line_number,
+            store_file.display()
+        ));
+    }
+
+    if let Some(e) = entries.iter().find(|e| !is_valid_name(&e.name)) {
+        messages.push(format!(
+            "error: invalid name '{}' at line {}: names must contain only alphanumeric characters",
+            e.name, e.line_number
+        ));
+    }
+
+    if let Some(e) = entries
+        .iter()
+        .find(|e| find_system_path_by_name(&e.name).is_some())
+    {
+        messages.push(format!(
+            "error: name '{}' at line {} is reserved for a protected system path",
+            e.name, e.line_number
+        ));
+    }
+
+    let mut seen_names = std::collections::HashMap::new();
+    for e in entries {
+        seen_names
+            .entry(&e.name)
+            .or_insert_with(Vec::new)
+            .push(e.line_number);
+    }
+    for (name, lines) in seen_names.iter().filter(|(_, lines)| lines.len() > 1) {
+        let line_list = lines
+            .iter()
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        messages.push(format!(
+            "error: duplicate name '{}' found at lines: {}",
+            name, line_list
+        ));
+    }
+
+    let mut seen_locations = std::collections::HashMap::new();
+    for entry in entries {
+        seen_locations
+            .entry(&entry.location)
+            .or_insert_with(Vec::new)
+            .push(entry.line_number);
+    }
+    for (location, lines) in seen_locations.iter().filter(|(_, lines)| lines.len() > 1) {
+        let line_list = lines
+            .iter()
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        messages.push(format!(
+            "error: duplicate path '{}' found at lines: {}",
+            location, line_list
+        ));
+    }
+
+    let invalid: Vec<&PathEntry> = entries
+        .iter()
+        .filter(|e| !Path::new(&e.location).exists())
+        .collect();
+    if !invalid.is_empty() {
+        messages.push("warning: the following stored paths do not exist:".to_string());
+        for e in invalid {
+            messages.push(format!("  {}", e.location));
+        }
+    }
+
+    messages
+}
+
+fn report_parse_warnings(parse_warnings: &[String]) {
+    for warning in collect_parse_warning_messages(parse_warnings) {
+        eprintln!("{}", warning);
+    }
+}
+
+fn report_store_issues_nonfatal(
+    store_file: &Path,
+    entries: &[PathEntry],
+    diagnostics: &[EntryDiagnostic],
+) {
+    for message in collect_store_issue_messages_nonfatal(store_file, entries, diagnostics) {
+        eprintln!("{}", message);
+    }
 }
 
 /// Check the existing entries, reporting any whose `location` does not
@@ -820,6 +975,7 @@ fn validate_loaded_entries(
 /// Returns an I/O error only if loading entries fails.
 fn validate_entries(store_file: &Path) -> io::Result<()> {
     let loaded = load_entries_with_diagnostics(store_file)?;
+    report_parse_warnings(&loaded.parse_warnings);
     validate_loaded_entries(store_file, &loaded.entries, &loaded.diagnostics, false);
     Ok(())
 }
@@ -1465,13 +1621,30 @@ fn handle_list(store_file: &Path) {
 /// Print the current PATH value as a formatted table.
 fn print_pretty_current_path(store_file: &Path) {
     let current = env::var("PATH").unwrap_or_default();
-    let entries = load_entries_or_warn(
-        store_file,
-        "failed to load store file for pretty PATH output",
-    )
-    .unwrap_or_default();
+    if !store_file.exists() {
+        print_pretty_path_output(&current, &[]);
+        eprintln!(
+            "warning: store file does not exist: {}",
+            store_file.display()
+        );
+        return;
+    }
 
-    print_pretty_path_output(&current, &entries);
+    let loaded = match load_entries_with_diagnostics(store_file) {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            print_pretty_path_output(&current, &[]);
+            eprintln!(
+                "warning: failed to load store file for pretty PATH output: {}",
+                error
+            );
+            return;
+        }
+    };
+
+    print_pretty_path_output(&current, &loaded.entries);
+    report_parse_warnings(&loaded.parse_warnings);
+    report_store_issues_nonfatal(store_file, &loaded.entries, &loaded.diagnostics);
 }
 
 /// Handle the `load` subcommand.
@@ -1515,6 +1688,7 @@ fn handle_verify(store_file: &Path) {
         std::process::exit(1);
     }
 
+    report_parse_warnings(&loaded.parse_warnings);
     validate_loaded_entries(store_file, &loaded.entries, &loaded.diagnostics, true);
     println!("Path file is valid.");
 }
@@ -1601,9 +1775,12 @@ fn main() {
         return;
     }
 
-    // Subcommands that need the store file: add, remove, delete, list, load.
-    // Store validation is skipped for restore and default pretty output,
-    // which don't use the store, so a malformed store file won't block recovery.
+    // Subcommands that require pre-validation of store entries: add, remove,
+    // delete, list, and load.
+    // Store validation is intentionally skipped for restore and default pretty
+    // output. Default pretty output still reads the store for name/type
+    // resolution, but does so with load_entries_or_warn so malformed/unreadable
+    // store files do not block PATH output.
     let needs_store = matches.subcommand_matches("add").is_some()
         || matches.subcommand_matches("remove").is_some()
         || matches.subcommand_matches("delete").is_some()
@@ -1750,7 +1927,7 @@ mod tests {
     /// Ensure unknown options are reported as diagnostics separate from `PathEntry`.
     fn parse_entry_line_reports_unknown_option_diagnostic() {
         let line = "'/tmp/tools' [tools] (noauto,pre,protect,postfix)";
-        let (entry, diagnostic) = parse_entry_line_with_diagnostic(line, 2).unwrap();
+        let (entry, diagnostic, parse_warning) = parse_entry_line_with_diagnostic(line, 2).unwrap();
 
         assert_eq!(entry.name, "tools");
         assert!(!entry.autoset_enabled());
@@ -1758,6 +1935,7 @@ mod tests {
         assert!(entry.is_protected());
 
         let diagnostic = diagnostic.expect("expected unknown option diagnostic");
+        assert!(parse_warning.is_none());
         assert_eq!(diagnostic.line_number, 2);
         assert_eq!(diagnostic.line, line);
         assert_eq!(
@@ -1772,11 +1950,12 @@ mod tests {
     /// Ensure mutually-exclusive options are reported as diagnostics.
     fn parse_entry_line_reports_conflicting_options_diagnostic() {
         let line = "'/tmp/tools' [tools] (auto,noauto)";
-        let (entry, diagnostic) = parse_entry_line_with_diagnostic(line, 9).unwrap();
+        let (entry, diagnostic, parse_warning) = parse_entry_line_with_diagnostic(line, 9).unwrap();
 
         assert_eq!(entry.name, "tools");
 
         let diagnostic = diagnostic.expect("expected conflicting options diagnostic");
+        assert!(parse_warning.is_none());
         assert_eq!(diagnostic.line_number, 9);
         assert_eq!(diagnostic.line, line);
         assert_eq!(
@@ -2183,11 +2362,12 @@ mod tests {
     /// recognized options still take effect.
     fn parse_entry_line_postfix_option_preserves_valid_options() {
         let line = "'/tmp/tools' [tools] (noauto,pre,protect,postfix)";
-        let (entry, diagnostic) = parse_entry_line_with_diagnostic(line, 2).unwrap();
+        let (entry, diagnostic, parse_warning) = parse_entry_line_with_diagnostic(line, 2).unwrap();
         assert_eq!(entry.name, "tools");
         assert!(!entry.autoset_enabled());
         assert!(entry.prepends_path());
         assert!(entry.is_protected());
+        assert!(parse_warning.is_none());
 
         let diagnostic = diagnostic.expect("expected unknown option diagnostic");
         assert_eq!(
@@ -2331,5 +2511,39 @@ mod tests {
         assert_eq!(diagnostic.line_number, 10);
         assert_eq!(diagnostic.line, "'/tmp/conflict' [c] (auto,noauto)");
         assert_eq!(diagnostic.kind, kind);
+    }
+
+    #[test]
+    /// Ensure parse warning collection preserves message order.
+    fn collect_parse_warning_messages_preserves_order() {
+        let warnings = vec![
+            "warning: first parse issue".to_string(),
+            "warning: second parse issue".to_string(),
+        ];
+
+        assert_eq!(collect_parse_warning_messages(&warnings), warnings);
+    }
+
+    #[test]
+    /// Ensure non-fatal issue collection includes diagnostics and validation issues.
+    fn collect_store_issue_messages_nonfatal_includes_expected_messages() {
+        let store_file = Path::new("/tmp/test.path");
+        let diagnostics = vec![entry_diagnostic(
+            2,
+            "'/tmp/tools' [tools] (auto,autoo)",
+            EntryDiagnosticKind::UnknownOption {
+                option: "autoo".to_string(),
+            },
+        )];
+        let entries = vec![PathEntry::new("/tmp:bad", "tools").with_line_number(2)];
+
+        let messages = collect_store_issue_messages_nonfatal(store_file, &entries, &diagnostics);
+
+        assert!(messages
+            .iter()
+            .any(|m| m.contains("warning: unknown entry option 'autoo'")));
+        assert!(messages
+            .iter()
+            .any(|m| m.contains("error: invalid stored location '/tmp:bad'")));
     }
 }

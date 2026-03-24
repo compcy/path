@@ -247,6 +247,22 @@ fn prints_path_env() {
     assert!(out_str.contains("bar"));
 }
 
+/// Default output should warn when the configured store file does not exist.
+#[test]
+fn default_path_warns_when_store_file_is_missing() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "foo:bar");
+    let assert = cmd.assert().success();
+    let out_str = String::from_utf8_lossy(&assert.get_output().stdout);
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+
+    assert!(out_str.contains("#"));
+    assert!(out_str.contains("PATH"));
+    assert!(stderr.contains("warning: store file does not exist"));
+}
+
 /// By default, entries are persisted to `$HOME/.path` when `--file` is omitted.
 #[test]
 fn default_store_file_is_home_dot_path() {
@@ -2094,14 +2110,18 @@ fn default_path_output_succeeds_with_malformed_store() {
     fs::write(&store, "'/invalid location with colon:' [bad] (auto)\n").unwrap();
 
     let mut cmd = test_cmd(dir, "test:path");
-    let output = cmd.assert().success().get_output().stdout.clone();
-    let out_str = String::from_utf8_lossy(&output);
+    let assert = cmd.assert().success();
+    let out_str = String::from_utf8_lossy(&assert.get_output().stdout);
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
 
     // Should output the current PATH despite malformed store.
     assert!(out_str.contains("#"));
     assert!(out_str.contains("PATH"));
     assert!(out_str.contains("test"));
     assert!(out_str.contains("path"));
+
+    // Store issues should still be reported for user visibility.
+    assert!(stderr.contains("error: invalid stored location"));
 }
 
 /// `path add` should still validate the store file and fail on malformed entries.

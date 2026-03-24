@@ -5,10 +5,14 @@
 a plain-text store file (default: `$HOME/.path`), with optional names and
 autoset and protection flags.
 
-Running `path` with no subcommand displays the current PATH as a human-readable
-formatted table. Commands that modify PATH (`add`, `remove`, `load`, `restore`)
-output a shell assignment like `export PATH='...new value...'` — because a child
-process cannot directly modify its parent shell environment.
+Because a child process cannot directly modify its parent shell environment,
+PATH-mutating commands output a shell assignment like
+`export PATH='...new value...'`.
+
+Running `path` with no subcommand displays the current PATH as a
+human-readable formatted table.
+
+The default `path` command prints a formatted PATH table (not an `export` line).
 
 For a persistent setup, source the wrapper script from your shell rc file
 (`~/.zshrc`, `~/.bashrc`, etc.).
@@ -81,6 +85,8 @@ Global option:
   - Column 4 (`TYPE`): `system` for built-in system paths, `known` for known extra paths, blank for others.
   - Protected entries show `[protected]` in the `TYPE` column.
   - Column widths are fitted to the widest value in each column.
+  - If the configured store file is missing, output still succeeds and prints a warning to stderr.
+  - If store entries are malformed/invalid, output still succeeds and prints warnings/errors to stderr after the table.
 
   ```
   #  PATH                NAME         TYPE
@@ -133,7 +139,7 @@ Global option:
   - Restores: `/bin` (`sysbin`), `/sbin` (`syssbin`), `/usr/bin` (`usrbin`), `/usr/sbin` (`usrsbin`), `/usr/local/bin` (`usrlocalbin`), `/usr/local/sbin` (`usrlocalsbin`).
   - Missing system paths are appended to the current PATH in that order.
 
-**Startup validation note:** when reading `.path`, the tool aborts if it finds:
+**Store validation note:** commands that validate/consume stored entries (`path add`, `path remove`, `path delete`, `path list`, `path load`, `path verify`) abort if they find:
 
 - a nameless entry,
 - a relative or non-canonical-looking stored location,
@@ -142,6 +148,8 @@ Global option:
 - duplicate names.
 
 Unknown alphabetic option tokens are warnings during normal store loading, but they are fatal under `path verify`.
+
+`path` (default pretty output) is intentionally more tolerant: it still prints the PATH table and then emits store warnings/errors to stderr.
 
 Missing filesystem locations only produce warnings (they are not auto-removed).
 
