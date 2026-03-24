@@ -78,14 +78,36 @@ fn pretty_output_names(output: &str) -> Vec<String> {
 /// Return the pretty-output NAME cell for a specific PATH segment.
 fn pretty_output_name_for_path(output: &str, path: &str) -> Option<String> {
     let header = output.lines().next()?;
+    let path_start = header.find("PATH")?;
     let name_start = header.find("NAME")?;
     let type_start = header.find("TYPE")?;
+
+    if path_start >= name_start || name_start >= type_start {
+        return None;
+    }
 
     output
         .lines()
         .skip(2)
-        .find(|line| line.contains(path) && line.len() >= type_start)
+        .find(|line| {
+            if line.len() < name_start {
+                return false;
+            }
+
+            line[path_start..name_start].trim() == path
+        })
         .map(|line| line[name_start..type_start].trim().to_string())
+}
+
+/// Ensure path matching uses the PATH column value, not substring search.
+#[test]
+fn pretty_output_name_for_path_matches_exact_path_segment() {
+    let output = "#  PATH      NAME    TYPE\n-  --------  ------  ----\n1  /usr/bin  usrbin  system\n2  /bin      sysbin  system\n";
+
+    assert_eq!(
+        pretty_output_name_for_path(output, "/bin"),
+        Some("sysbin".to_string())
+    );
 }
 
 /// Assert that all non-blank pretty-print names in the table are unique.
