@@ -6,8 +6,13 @@ a plain-text store file (default: `$HOME/.path`), with optional names and
 autoset and protection flags.
 
 Because a child process cannot directly modify its parent shell environment,
-commands that compute PATH output a shell assignment like
+PATH-mutating commands output a shell assignment like
 `export PATH='...new value...'`.
+
+Running `path` with no subcommand displays the current PATH as a
+human-readable formatted table.
+
+The default `path` command prints a formatted PATH table (not an `export` line).
 
 For a persistent setup, source the wrapper script from your shell rc file
 (`~/.zshrc`, `~/.bashrc`, etc.).
@@ -72,7 +77,26 @@ Global option:
 
 ### Commands
 
-- `path` — display current PATH
+- `path` — display the current PATH as a formatted table
+  - Each segment of the active PATH is printed on its own line.
+  - Column 1 (`#`): 1-based row number.
+  - Column 2 (`PATH`): the directory path.
+  - Column 3 (`NAME`): resolved first from the store file, then from the built-in system/known path lists; blank when no name is known.
+  - Column 4 (`TYPE`): `system` for built-in system paths, `known` for known extra paths, blank for others.
+  - Protected entries show `[protected]` in the `TYPE` column.
+  - Column widths are fitted to the widest value in each column.
+  - If the configured store file is missing, output still succeeds and prints a warning to stderr.
+  - If store entries are malformed/invalid, output still succeeds and prints warnings/errors to stderr after the table.
+
+  ```
+  #  PATH                NAME         TYPE
+  -  ------------------  -----------  ------------------
+  1  /usr/local/bin      usrlocalbin  system [protected]
+  2  /usr/bin            usrbin       system [protected]
+  3  /bin                sysbin       system [protected]
+  4  /home/user/mytools
+  ```
+
 - `path add <location-or-name> [name]` — append to PATH.
   - If `<location-or-name>` matches a stored short name, that stored location is used.
   - Otherwise it must be an absolute path (`/…`) or dot-relative (`./…`, `../…`).
@@ -101,23 +125,6 @@ Global option:
   - If the argument matches a stored short name, that entry is deleted.
   - Otherwise the argument is treated as a path (same absolute/dot-relative validation, and no `:`), and matching stored locations are deleted.
 - `path list` — show all saved entries from the configured store file
-- `path list --pretty` — display the current PATH as a formatted table
-  - Each segment of the active PATH is printed on its own line.
-  - Column 1 (`#`): 1-based row number.
-  - Column 2 (`PATH`): the directory path.
-  - Column 3 (`TYPE`): `system` for built-in system paths, `known` for known extra paths, blank for others.
-  - Column 4 (`NAME`): resolved first from the store file, then from the built-in system/known path lists; blank when no name is known.
-  - Protected entries show `[protected]` in the `TYPE` column.
-  - Column widths are fitted to the widest value in each column.
-
-  ```
-  #  PATH                TYPE                NAME
-  -  ------------------  ------------------  -----------
-  1  /usr/local/bin      system [protected]  usrlocalbin
-  2  /usr/bin            system [protected]  usrbin
-  3  /bin                system [protected]  sysbin
-  4  /home/user/mytools
-  ```
 
 - `path load` — apply all stored entries marked `auto` to PATH
   - Entries with option `pre` are prepended.
@@ -132,7 +139,7 @@ Global option:
   - Restores: `/bin` (`sysbin`), `/sbin` (`syssbin`), `/usr/bin` (`usrbin`), `/usr/sbin` (`usrsbin`), `/usr/local/bin` (`usrlocalbin`), `/usr/local/sbin` (`usrlocalsbin`).
   - Missing system paths are appended to the current PATH in that order.
 
-**Startup validation note:** when reading `.path`, the tool aborts if it finds:
+**Store validation note:** commands that validate/consume stored entries (`path add`, `path remove`, `path delete`, `path list`, `path load`, `path verify`) abort if they find:
 
 - a nameless entry,
 - a relative or non-canonical-looking stored location,
@@ -141,6 +148,8 @@ Global option:
 - duplicate names.
 
 Unknown alphabetic option tokens are warnings during normal store loading, but they are fatal under `path verify`.
+
+`path` (default pretty output) is intentionally more tolerant: it still prints the PATH table and then emits store warnings/errors to stderr.
 
 Missing filesystem locations only produce warnings (they are not auto-removed).
 
@@ -162,7 +171,7 @@ path delete home                     # delete stored entry from .path by name
 path load                            # add only entries marked auto (usually automatic at shell startup)
 path verify                          # validate .path contents and report status
 path restore                         # restore built-in protected system paths to PATH
-path list --pretty                   # show current PATH as a table with index, type, and names
+path                                 # show current PATH as a table with index, type, and names
 
 # invalid unless "foo" is a stored name
 path add foo
