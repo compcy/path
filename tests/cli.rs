@@ -2332,3 +2332,60 @@ fn verify_reports_only_invalid_option_entries_in_mixed_file() {
         stderr
     );
 }
+
+/// Control characters in a store-file line must be sanitized before being echoed
+/// in error output; raw ESC bytes must never appear in stderr.
+#[test]
+fn verify_sanitizes_control_chars_in_echoed_diagnostic_line() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    // Fixture embeds an ANSI escape sequence in the name field plus an
+    // unknown option so verify emits the echoed diagnostic line.
+    copy_fixture_to_temp_store(dir, "escape_in_name_unknown_option").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let assert = cmd.arg("verify").assert().failure();
+    let stderr_bytes = assert.get_output().stderr.clone();
+    let stderr = String::from_utf8_lossy(&stderr_bytes);
+
+    // The raw ESC byte (0x1B) must not appear in the output.
+    assert!(
+        !stderr_bytes.contains(&0x1b_u8),
+        "stderr must not contain a raw ESC byte; got: {:?}",
+        stderr
+    );
+    // The sanitized Unicode escape form must appear instead.
+    assert!(
+        stderr.contains("\\u{001B}"),
+        "stderr must contain sanitized \\u{{001B}} form; got: {}",
+        stderr
+    );
+}
+
+/// Control characters in a store-file location field must be sanitized before
+/// being echoed in `list` output; raw ESC bytes must never appear in stdout.
+#[test]
+fn list_sanitizes_control_chars_in_location_field_output() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    // Fixture embeds an ANSI escape sequence in the location field.
+    copy_fixture_to_temp_store(dir, "escape_in_location").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    // `list` may succeed or fail depending on validation, but either way the
+    // output bytes must not contain a raw ESC character.
+    let output = cmd.arg("list").output().unwrap();
+    let stdout_bytes = &output.stdout;
+    let stderr_bytes = &output.stderr;
+
+    assert!(
+        !stdout_bytes.contains(&0x1b_u8),
+        "stdout must not contain a raw ESC byte"
+    );
+    assert!(
+        !stderr_bytes.contains(&0x1b_u8),
+        "stderr must not contain a raw ESC byte"
+    );
+}

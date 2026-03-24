@@ -22,12 +22,13 @@
 
 - Always use red/green TDD for all development and behavior changes, without exception.
 - Follow red/green TDD strictly as two separate steps:
-  1. **Red** — Write the tests first. Run `cargo test --all` and confirm the new tests _fail_ before writing any implementation code. Do not proceed until the failure is verified.
+  1. **Red** — Write the tests first. The code must compile and the new tests must _run_ but _fail_ on their assertions before writing any implementation code. A compile error (e.g. "function not found") is **not** a valid Red state — the test must compile, execute, and fail at an assertion. Do not proceed until a genuine test failure is verified.
   2. **Green** — Write the minimum implementation needed to make the failing tests pass. Run `cargo test --all` again and confirm all tests now pass.
+- **Red always requires a running assertion failure, not a compile error.** When new tests reference functions that do not yet exist, first add a minimal non-functional stub in `src/` (e.g. a function body containing `todo!()` or `unimplemented!()`) so the project compiles. Only after the project compiles should you run the tests and observe the assertion failure. The stub is not considered implementation — it exists solely to allow the code to compile and the test to reach its assertion.
 - Mandatory execution gate for each behavior change:
-  1. Edit only test files (and fixtures/docs for tests) in Red.
-  2. Run a focused failing test command (for example `cargo test --test cli <test_name>`), capture the failure, and report it.
-  3. Only after observing that failure, edit implementation files under `src/`.
+  1. Edit test files (and fixtures/docs for tests) in Red. If the new tests reference functions that do not yet exist, also add minimal stubs in `src/` so the project compiles.
+  2. Run a focused failing test command (for example `cargo test --test cli <test_name>`), capture the **assertion failure** output, and report it. A compiler error is not an acceptable Red state — add stubs until it compiles, then run.
+  3. Only after observing a running test failure, replace stubs with real implementation in `src/`.
   4. Re-run the focused test(s), then `cargo test --all`, then `cargo clippy --all-targets -- -D warnings`.
 - Implementation edits before an observed Red failure are not allowed. If this happens, stop, disclose the deviation, and re-run the workflow from Red.
 - Never write implementation code and its tests in the same step; the failing-test state must be observed and confirmed between steps.
@@ -35,12 +36,16 @@
 - Adding or modifying helper functions used by tests is not an exception to TDD: write the helper tests first, observe the failing state, and only then implement or modify the helper.
 - Do not batch multiple new helper implementations into a single Green step unless each helper's corresponding failing test state was already observed and recorded during a prior Red step.
 - When reporting work, explicitly indicate the observed **Red** failure before the **Green** implementation step so the workflow is auditable in the conversation history.
+- The Red failure reported must be the **test assertion output** (e.g. `thread 'test_name' panicked at ...`), not a compiler diagnostic. If only a compiler error was observed, the Red gate has not been satisfied.
 - In status updates and final summaries, include exact commands used for Red and Green and whether each command exited non-zero (Red) or zero (Green).
 - Every new function must have a corresponding direct unit test written first in the Red step, before any implementation edits.
 - Refactors are not exempt: when a refactor introduces any new function (including private helpers), add corresponding unit tests for each new function in the same change.
 - If any new function lacks a direct test, the change is incomplete and must not be reported as done.
 - If any new function lacks the required purpose comment/doc comment, the change is incomplete and must not be reported as done.
 - Integration tests should be created to test the output of the CLI commands.
+- Integration tests that exercise store-file parsing, validation, diagnostics, or sanitized rendering must use `.path` fixtures under `tests/paths/` and `copy_fixture_to_temp_store`; do not inline store-file payloads with `fs::write` in those tests.
+- This fixture-first rule also applies to malicious input coverage (control characters, invisible Unicode, shell metacharacters, delimiter edge-cases, and malformed field shapes).
+- Inline `fs::write` store-file content is allowed only when a test must generate content dynamically and cannot be represented as a static fixture; such cases must include a short comment explaining why a fixture is not suitable.
 - Be comprehensive in testing edge cases, such as invalid input formats, missing files, and permission issues.
 - Test malicious input scenarios, such as attempts to store or load paths with shell metacharacters or escape sequences.
 - Run all tests with `cargo test --all` to ensure they pass before committing changes.
@@ -48,8 +53,9 @@
 ## Defect Fix Methodology
 
 - For bug fixes, first reproduce the defect with a focused unit test (or integration test when behavior is CLI-only) before changing implementation code.
-- Record and verify the failing Red state by running the relevant test command and confirming the new test fails for the expected reason.
+- Record and verify the failing Red state by running the relevant test command and confirming the new test **compiles, runs, and fails** for the expected reason (assertion failure). A compile error does not satisfy this gate.
 - For defects involving `.path` parsing or validation behavior, add or update dedicated fixture files in `tests/paths/*.path` and prefer `copy_fixture_to_temp_store` in integration tests instead of inline `fs::write` fixture content.
+- For defects involving echoed diagnostics or output sanitization from `.path` content, add/update dedicated fixtures in `tests/paths/*.path` (including malicious/control-character cases) rather than embedding those payloads inline in tests.
 - When fixture files are added, removed, or renamed, update `tests/paths/README.md` in the same change.
 - Implement the smallest possible fix that addresses the observed failure; avoid broad refactors unless required for correctness.
 - Re-run the focused tests first, then run `cargo test --all`, and finally run `cargo clippy --all-targets -- -D warnings`.

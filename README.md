@@ -253,6 +253,13 @@ The default `path` table view is intentionally tolerant — it still prints the
 PATH table and emits store warnings/errors to stderr afterward. Missing
 filesystem locations produce warnings only and are never auto-removed.
 
+Any content read from the store file that is reflected in error or warning
+messages is sanitized before display: control characters (such as ANSI escape
+sequences) and invisible Unicode code points (bidirectional overrides,
+zero-width characters, BOM, etc.) are replaced with their `\u{XXXX}` escape
+form. This prevents a crafted store file from injecting terminal control
+sequences via diagnostic output.
+
 ## Command Reference
 
 | Command                       | Description                                   |
