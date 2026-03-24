@@ -5,9 +5,10 @@
 a plain-text store file (default: `$HOME/.path`), with optional names and
 autoset and protection flags.
 
-Because a child process cannot directly modify its parent shell environment,
-commands that compute PATH output a shell assignment like
-`export PATH='...new value...'`.
+Running `path` with no subcommand displays the current PATH as a human-readable
+formatted table. Commands that modify PATH (`add`, `remove`, `load`, `restore`)
+output a shell assignment like `export PATH='...new value...'` — because a child
+process cannot directly modify its parent shell environment.
 
 For a persistent setup, source the wrapper script from your shell rc file
 (`~/.zshrc`, `~/.bashrc`, etc.).
