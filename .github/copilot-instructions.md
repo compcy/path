@@ -63,6 +63,7 @@
 
 ## Project Conventions
 
+- Treat this project as high-security software because it can modify a user's execution environment (`PATH`). Prioritize defenses against path-manipulation attacks (path precedence hijacking, crafted delimiters, deceptive names, control/invisible characters, and malformed store entries) in code, tests, and docs.
 - The file format for stored paths is `'<location>' [name] (options)`, where `location` is the path being stored, `name` is an optional identifier for the path, and `options` can include `auto`, `noauto`, `pre`, and `protect`.
 - All names must be unique and cannot contain whitespace or shell metacharacters. They should be descriptive of the path's purpose (e.g. `cargo`, `pipx`).
 - `README.md` must be updated in the same change for any user-visible change, including: CLI behavior, command output, warnings/errors, defaults, examples, flags, and file-format semantics.
