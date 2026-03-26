@@ -28,6 +28,8 @@ This directory contains pre-made `.path` store files for integration tests.
 - `reserved_system_name.path` - Entry using a reserved built-in system name (`sysbin`) to verify name-reservation validation
 - `system_paths.path` - Built-in system paths stored explicitly (allowed case)
 - `known_paths.path` - Known non-system built-in paths stored explicitly (allowed case)
+- `escape_in_location.path` - Location contains a raw escape/control character for invalid-location diagnostic sanitization coverage
+- `escape_in_name_unknown_option.path` - Stored name contains a raw escape/control character for pretty-output sanitization coverage
 
 ## Malicious Fixtures
 

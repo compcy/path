@@ -649,11 +649,11 @@ fn report_invalid_option(level: &str, store_file: &Path, diagnostic: &EntryDiagn
     eprintln!(
         "{}: unknown entry option '{}' at line {} in {}",
         level,
-        invalid_option,
+        sanitize_for_display(invalid_option),
         diagnostic.line_number,
         store_file.display()
     );
-    eprintln!("{}: {}", level, diagnostic.line);
+    eprintln!("{}: {}", level, sanitize_for_display(&diagnostic.line));
 }
 
 fn report_conflicting_options(store_file: &Path, diagnostic: &EntryDiagnostic) {
@@ -663,12 +663,12 @@ fn report_conflicting_options(store_file: &Path, diagnostic: &EntryDiagnostic) {
     };
     eprintln!(
         "error: conflicting entry options '{}' and '{}' at line {} in {}",
-        left,
-        right,
+        sanitize_for_display(left),
+        sanitize_for_display(right),
         diagnostic.line_number,
         store_file.display()
     );
-    eprintln!("error: {}", diagnostic.line);
+    eprintln!("error: {}", sanitize_for_display(&diagnostic.line));
 }
 
 // Collects parse warning messages into a vector for later reporting.
@@ -689,21 +689,24 @@ fn collect_store_issue_messages_nonfatal(
             EntryDiagnosticKind::UnknownOption { option } => {
                 messages.push(format!(
                     "warning: unknown entry option '{}' at line {} in {}",
-                    option,
+                    sanitize_for_display(option),
                     diagnostic.line_number,
                     store_file.display()
                 ));
-                messages.push(format!("warning: {}", diagnostic.line));
+                messages.push(format!(
+                    "warning: {}",
+                    sanitize_for_display(&diagnostic.line)
+                ));
             }
             EntryDiagnosticKind::ConflictingOptions { left, right } => {
                 messages.push(format!(
                     "error: conflicting entry options '{}' and '{}' at line {} in {}",
-                    left,
-                    right,
+                    sanitize_for_display(left),
+                    sanitize_for_display(right),
                     diagnostic.line_number,
                     store_file.display()
                 ));
-                messages.push(format!("error: {}", diagnostic.line));
+                messages.push(format!("error: {}", sanitize_for_display(&diagnostic.line)));
             }
         }
     }
@@ -713,7 +716,7 @@ fn collect_store_issue_messages_nonfatal(
             "error: found nameless entry in {} at line {}: '{}'",
             store_file.display(),
             e.line_number,
-            e.location
+            sanitize_for_display(&e.location)
         ));
     }
 
@@ -723,7 +726,7 @@ fn collect_store_issue_messages_nonfatal(
     {
         messages.push(format!(
             "error: invalid stored location '{}' at line {}: locations in {} must be absolute, canonical-looking, and must not contain ':'",
-            e.location,
+            sanitize_for_display(&e.location),
             e.line_number,
             store_file.display()
         ));
@@ -732,7 +735,8 @@ fn collect_store_issue_messages_nonfatal(
     if let Some(e) = entries.iter().find(|e| !is_valid_name(&e.name)) {
         messages.push(format!(
             "error: invalid name '{}' at line {}: names must contain only alphanumeric characters",
-            e.name, e.line_number
+            sanitize_for_display(&e.name),
+            e.line_number
         ));
     }
 
@@ -742,7 +746,8 @@ fn collect_store_issue_messages_nonfatal(
     {
         messages.push(format!(
             "error: name '{}' at line {} is reserved for a protected system path",
-            e.name, e.line_number
+            sanitize_for_display(&e.name),
+            e.line_number
         ));
     }
 
@@ -761,7 +766,8 @@ fn collect_store_issue_messages_nonfatal(
             .join(", ");
         messages.push(format!(
             "error: duplicate name '{}' found at lines: {}",
-            name, line_list
+            sanitize_for_display(name),
+            line_list
         ));
     }
 
@@ -780,7 +786,8 @@ fn collect_store_issue_messages_nonfatal(
             .join(", ");
         messages.push(format!(
             "error: duplicate path '{}' found at lines: {}",
-            location, line_list
+            sanitize_for_display(location),
+            line_list
         ));
     }
 
@@ -791,7 +798,7 @@ fn collect_store_issue_messages_nonfatal(
     if !invalid.is_empty() {
         messages.push("warning: the following stored paths do not exist:".to_string());
         for e in invalid {
-            messages.push(format!("  {}", e.location));
+            messages.push(format!("  {}", sanitize_for_display(&e.location)));
         }
     }
 
@@ -800,7 +807,7 @@ fn collect_store_issue_messages_nonfatal(
 
 fn report_parse_warnings(parse_warnings: &[String]) {
     for warning in collect_parse_warning_messages(parse_warnings) {
-        eprintln!("{}", warning);
+        eprintln!("{}", sanitize_for_display(&warning));
     }
 }
 
@@ -867,7 +874,7 @@ fn validate_loaded_entries(
             "error: found nameless entry in {} at line {}: '{}'",
             store_file.display(),
             e.line_number,
-            e.location
+            sanitize_for_display(&e.location)
         );
         std::process::exit(1);
     }
@@ -878,7 +885,7 @@ fn validate_loaded_entries(
     {
         eprintln!(
             "error: invalid stored location '{}' at line {}: locations in {} must be absolute, canonical-looking, and must not contain ':'",
-            e.location,
+            sanitize_for_display(&e.location),
             e.line_number,
             store_file.display()
         );
@@ -888,7 +895,8 @@ fn validate_loaded_entries(
     if let Some(e) = entries.iter().find(|e| !is_valid_name(&e.name)) {
         eprintln!(
             "error: invalid name '{}' at line {}: names must contain only alphanumeric characters",
-            e.name, e.line_number
+            sanitize_for_display(&e.name),
+            e.line_number
         );
         std::process::exit(1);
     }
@@ -899,7 +907,8 @@ fn validate_loaded_entries(
     {
         eprintln!(
             "error: name '{}' at line {} is reserved for a protected system path",
-            e.name, e.line_number
+            sanitize_for_display(&e.name),
+            e.line_number
         );
         std::process::exit(1);
     }
@@ -925,7 +934,8 @@ fn validate_loaded_entries(
                 .join(", ");
             eprintln!(
                 "error: duplicate name '{}' found at lines: {}",
-                name, line_list
+                sanitize_for_display(name),
+                line_list
             );
         }
         std::process::exit(1);
@@ -952,7 +962,8 @@ fn validate_loaded_entries(
                 .join(", ");
             eprintln!(
                 "error: duplicate path '{}' found at lines: {}",
-                location, line_list
+                sanitize_for_display(location),
+                line_list
             );
         }
         std::process::exit(1);
@@ -968,7 +979,7 @@ fn validate_loaded_entries(
 
     eprintln!("warning: the following stored paths do not exist:");
     for e in invalid {
-        eprintln!("  {}", e.location);
+        eprintln!("  {}", sanitize_for_display(&e.location));
     }
 }
 
@@ -1295,10 +1306,45 @@ fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -
 fn format_list_entry(entry: &PathEntry) -> String {
     format!(
         "{} [{}] ({})",
-        entry.location,
-        entry.name,
+        sanitize_for_display(&entry.location),
+        sanitize_for_display(&entry.name),
         format_entry_options(entry)
     )
+}
+
+/// Return `true` for invisible Unicode code points that are not caught by
+/// `char::is_control` but can still manipulate terminal rendering or hide
+/// content from the viewer (bidirectional overrides, zero-width characters,
+/// BOM, and similar format characters).
+fn is_invisible_unicode(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'               // Soft hyphen
+        | '\u{200B}'..='\u{200D}' // Zero-width space / non-joiner / joiner
+        | '\u{200E}' | '\u{200F}' // LTR mark / RTL mark
+        | '\u{202A}'..='\u{202E}' // Directional embedding/override characters
+        | '\u{2060}'..='\u{2064}' // Word joiner and invisible operators
+        | '\u{2066}'..='\u{206F}' // Directional isolates and deprecated format chars
+        | '\u{FEFF}'              // BOM / zero-width no-break space
+        | '\u{FFF9}'..='\u{FFFB}' // Interlinear annotation characters
+    )
+}
+
+/// Replace every control character and invisible Unicode code point in `value`
+/// with its `\\u{XXXX}` escape sequence so that the output is safe to display
+/// in a terminal without triggering ANSI sequences, audible bells, cursor
+/// movement, bidirectional overrides, or other side-effects.
+fn sanitize_for_display(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c.is_control() || is_invisible_unicode(c) {
+            use std::fmt::Write as _;
+            let _ = write!(result, "\\u{{{:04X}}}", c as u32);
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 /// Print the current PATH as a formatted table with index, name, and type columns.
@@ -1311,7 +1357,7 @@ fn print_pretty_path_output(current: &str, entries: &[PathEntry]) {
 
     let names: Vec<String> = segments
         .iter()
-        .map(|seg| resolve_segment_name(seg, entries))
+        .map(|seg| sanitize_for_display(&resolve_segment_name(seg, entries)))
         .collect();
 
     let types: Vec<String> = segments
@@ -2291,6 +2337,23 @@ mod tests {
     }
 
     #[test]
+    /// Ensure list formatting sanitizes store-derived control and invisible characters.
+    fn format_list_entry_sanitizes_store_derived_fields() {
+        let entry = PathEntry::new("/usr/local/bin", "bad\u{001B}name")
+            .with_options(
+                AutosetMode::NoAuto,
+                PlacementMode::Postfix,
+                ProtectionMode::Unprotected,
+            )
+            .with_line_number(1);
+
+        assert_eq!(
+            format_list_entry(&entry),
+            "/usr/local/bin [bad\\u{001B}name] (noauto)"
+        );
+    }
+
+    #[test]
     /// Ensure missing third fields are interpreted as `auto` for manual edits.
     fn parse_entry_line_missing_third_field_defaults_to_auto() {
         let entry = parse_entry_line("'/tmp/tools' [tools]", 2).unwrap();
@@ -2547,5 +2610,73 @@ mod tests {
         assert!(messages
             .iter()
             .any(|m| m.contains("error: invalid stored location '/tmp:bad'")));
+    }
+
+    #[test]
+    /// Ensure invisible Unicode detection covers zero-width and bidi controls.
+    fn is_invisible_unicode_detects_security_relevant_codepoints() {
+        assert!(is_invisible_unicode('\u{200B}'));
+        assert!(is_invisible_unicode('\u{202E}'));
+        assert!(is_invisible_unicode('\u{FEFF}'));
+        assert!(!is_invisible_unicode('a'));
+        assert!(!is_invisible_unicode('/'));
+        assert!(!is_invisible_unicode(' '));
+        assert!(!is_invisible_unicode('Z'));
+    }
+
+    #[test]
+    /// Ensure display sanitization escapes control and invisible Unicode characters.
+    fn sanitize_for_display_escapes_control_and_invisible_characters() {
+        let value = "safe\u{001B}x\u{200B}y\nz";
+
+        assert_eq!(
+            sanitize_for_display(value),
+            "safe\\u{001B}x\\u{200B}y\\u{000A}z"
+        );
+    }
+
+    #[test]
+    /// Ensure display sanitization escapes individual security-relevant characters.
+    fn sanitize_for_display_escapes_individual_security_relevant_characters() {
+        assert_eq!(sanitize_for_display("\x1b[31m"), "\\u{001B}[31m");
+        assert_eq!(sanitize_for_display("\x07"), "\\u{0007}");
+        assert_eq!(sanitize_for_display("\x00"), "\\u{0000}");
+        assert_eq!(sanitize_for_display("\r"), "\\u{000D}");
+        assert_eq!(sanitize_for_display("\u{202E}"), "\\u{202E}");
+        assert_eq!(sanitize_for_display("\u{200B}"), "\\u{200B}");
+        assert_eq!(sanitize_for_display("/tmp/\x1bpath"), "/tmp/\\u{001B}path");
+    }
+
+    #[test]
+    /// Ensure display sanitization leaves ordinary printable text unchanged.
+    fn sanitize_for_display_preserves_plain_text() {
+        assert_eq!(sanitize_for_display("hello /tmp/path"), "hello /tmp/path");
+        let value = "/usr/local/bin [cargo] (auto)";
+
+        assert_eq!(sanitize_for_display(value), value);
+    }
+
+    #[test]
+    /// Ensure non-fatal issue collection sanitizes store-derived control characters.
+    fn collect_store_issue_messages_nonfatal_sanitizes_store_derived_text() {
+        let store_file = Path::new("/tmp/test.path");
+        let diagnostics = vec![entry_diagnostic(
+            4,
+            "'/tmp/safe' [bad\u{001B}name] (auto,odd\u{001B}opt)",
+            EntryDiagnosticKind::UnknownOption {
+                option: "odd\u{001B}opt".to_string(),
+            },
+        )];
+        let entries = vec![PathEntry::new("/tmp/safe", "bad\u{001B}name").with_line_number(4)];
+
+        let messages = collect_store_issue_messages_nonfatal(store_file, &entries, &diagnostics);
+
+        assert!(messages.iter().all(|message| !message.contains('\u{001B}')));
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("odd\\u{001B}opt")));
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("bad\\u{001B}name")));
     }
 }

@@ -21,6 +21,44 @@ fn test_cmd(dir: &Path, path_env: &str) -> assert_cmd::Command {
     cmd
 }
 
+/// Default `path` output should sanitize names derived from the store file so
+/// control characters do not appear in the pretty table or stderr diagnostics.
+#[test]
+fn default_path_sanitizes_store_derived_name() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    // Use a fixture where the stored name contains an embedded ESC sequence.
+    copy_fixture_to_temp_store(dir, "escape_in_name_unknown_option").unwrap();
+
+    // Ensure PATH includes the stored location so the NAME column would show it.
+    let mut cmd = test_cmd(dir, "/tmp/safe:/usr/bin");
+    let assert = cmd.assert().success();
+    let output = assert.get_output();
+
+    let stdout_bytes = output.stdout.clone();
+    let stderr_bytes = output.stderr.clone();
+    let stdout = String::from_utf8_lossy(&stdout_bytes);
+
+    // Raw ESC byte must not appear in either stream.
+    assert!(
+        !stdout_bytes.contains(&0x1b_u8),
+        "stdout must not contain a raw ESC byte; got: {}",
+        stdout
+    );
+    assert!(
+        !stderr_bytes.contains(&0x1b_u8),
+        "stderr must not contain a raw ESC byte"
+    );
+
+    // The sanitized Unicode escape form should appear in the output instead.
+    assert!(
+        stdout.contains("\\u{001B}"),
+        "stdout must contain sanitized \\u{{001B}} form; got: {}",
+        stdout
+    );
+}
+
 /// Returns the path to an existing fixture file under `tests/paths`.
 fn fixture_path(fixture_name: &str) -> PathBuf {
     Path::new("tests")
@@ -2330,5 +2368,62 @@ fn verify_reports_only_invalid_option_entries_in_mixed_file() {
         !stderr.contains("'/opt/skipped'"),
         "expected no error for skipped entry: {}",
         stderr
+    );
+}
+
+/// Control characters in a store-file line must be sanitized before being echoed
+/// in error output; raw ESC bytes must never appear in stderr.
+#[test]
+fn verify_sanitizes_control_chars_in_echoed_diagnostic_line() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    // Fixture embeds an ANSI escape sequence in the name field plus an
+    // unknown option so verify emits the echoed diagnostic line.
+    copy_fixture_to_temp_store(dir, "escape_in_name_unknown_option").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let assert = cmd.arg("verify").assert().failure();
+    let stderr_bytes = assert.get_output().stderr.clone();
+    let stderr = String::from_utf8_lossy(&stderr_bytes);
+
+    // The raw ESC byte (0x1B) must not appear in the output.
+    assert!(
+        !stderr_bytes.contains(&0x1b_u8),
+        "stderr must not contain a raw ESC byte; got: {:?}",
+        stderr
+    );
+    // The sanitized Unicode escape form must appear instead.
+    assert!(
+        stderr.contains("\\u{001B}"),
+        "stderr must contain sanitized \\u{{001B}} form; got: {}",
+        stderr
+    );
+}
+
+/// Control characters in a store-file location field must be sanitized before
+/// being echoed in `list` output; raw ESC bytes must never appear in stdout.
+#[test]
+fn list_sanitizes_control_chars_in_location_field_output() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    // Fixture embeds an ANSI escape sequence in the location field.
+    copy_fixture_to_temp_store(dir, "escape_in_location").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    // `list` may succeed or fail depending on validation, but either way the
+    // output bytes must not contain a raw ESC character.
+    let output = cmd.arg("list").output().unwrap();
+    let stdout_bytes = &output.stdout;
+    let stderr_bytes = &output.stderr;
+
+    assert!(
+        !stdout_bytes.contains(&0x1b_u8),
+        "stdout must not contain a raw ESC byte"
+    );
+    assert!(
+        !stderr_bytes.contains(&0x1b_u8),
+        "stderr must not contain a raw ESC byte"
     );
 }
