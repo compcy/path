@@ -40,6 +40,8 @@
 - In status updates and final summaries, include exact commands used for Red and Green and whether each command exited non-zero (Red) or zero (Green).
 - Every new function must have a corresponding direct unit test written first in the Red step, before any implementation edits.
 - Refactors are not exempt: when a refactor introduces any new function (including private helpers), add corresponding unit tests for each new function in the same change.
+- "Covered indirectly" is not sufficient: if you add a helper for formatting, sanitization, parsing, validation, or diagnostics, add at least one direct test that calls that helper and asserts its exact output or behavior.
+- If you modify an existing helper's behavior, add or update a direct test for that helper in the same Red/Green cycle, even if integration tests also exercise the path.
 - If any new function lacks a direct test, the change is incomplete and must not be reported as done.
 - If any new function lacks the required purpose comment/doc comment, the change is incomplete and must not be reported as done.
 - Integration tests should be created to test the output of the CLI commands.

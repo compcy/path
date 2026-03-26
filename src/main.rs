@@ -649,7 +649,7 @@ fn report_invalid_option(level: &str, store_file: &Path, diagnostic: &EntryDiagn
     eprintln!(
         "{}: unknown entry option '{}' at line {} in {}",
         level,
-        invalid_option,
+        sanitize_for_display(invalid_option),
         diagnostic.line_number,
         store_file.display()
     );
@@ -663,8 +663,8 @@ fn report_conflicting_options(store_file: &Path, diagnostic: &EntryDiagnostic) {
     };
     eprintln!(
         "error: conflicting entry options '{}' and '{}' at line {} in {}",
-        left,
-        right,
+        sanitize_for_display(left),
+        sanitize_for_display(right),
         diagnostic.line_number,
         store_file.display()
     );
@@ -689,7 +689,7 @@ fn collect_store_issue_messages_nonfatal(
             EntryDiagnosticKind::UnknownOption { option } => {
                 messages.push(format!(
                     "warning: unknown entry option '{}' at line {} in {}",
-                    option,
+                    sanitize_for_display(option),
                     diagnostic.line_number,
                     store_file.display()
                 ));
@@ -701,8 +701,8 @@ fn collect_store_issue_messages_nonfatal(
             EntryDiagnosticKind::ConflictingOptions { left, right } => {
                 messages.push(format!(
                     "error: conflicting entry options '{}' and '{}' at line {} in {}",
-                    left,
-                    right,
+                    sanitize_for_display(left),
+                    sanitize_for_display(right),
                     diagnostic.line_number,
                     store_file.display()
                 ));
@@ -807,7 +807,7 @@ fn collect_store_issue_messages_nonfatal(
 
 fn report_parse_warnings(parse_warnings: &[String]) {
     for warning in collect_parse_warning_messages(parse_warnings) {
-        eprintln!("{}", warning);
+        eprintln!("{}", sanitize_for_display(&warning));
     }
 }
 
@@ -1312,6 +1312,41 @@ fn format_list_entry(entry: &PathEntry) -> String {
     )
 }
 
+/// Return `true` for invisible Unicode code points that are not caught by
+/// `char::is_control` but can still manipulate terminal rendering or hide
+/// content from the viewer (bidirectional overrides, zero-width characters,
+/// BOM, and similar format characters).
+fn is_invisible_unicode(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'               // Soft hyphen
+        | '\u{200B}'..='\u{200D}' // Zero-width space / non-joiner / joiner
+        | '\u{200E}' | '\u{200F}' // LTR mark / RTL mark
+        | '\u{202A}'..='\u{202E}' // Directional embedding/override characters
+        | '\u{2060}'..='\u{2064}' // Word joiner and invisible operators
+        | '\u{2066}'..='\u{206F}' // Directional isolates and deprecated format chars
+        | '\u{FEFF}'              // BOM / zero-width no-break space
+        | '\u{FFF9}'..='\u{FFFB}' // Interlinear annotation characters
+    )
+}
+
+/// Replace every control character and invisible Unicode code point in `value`
+/// with its `\\u{XXXX}` escape sequence so that the output is safe to display
+/// in a terminal without triggering ANSI sequences, audible bells, cursor
+/// movement, bidirectional overrides, or other side-effects.
+fn sanitize_for_display(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c.is_control() || is_invisible_unicode(c) {
+            use std::fmt::Write as _;
+            let _ = write!(result, "\\u{{{:04X}}}", c as u32);
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 /// Print the current PATH as a formatted table with index, name, and type columns.
 fn print_pretty_path_output(current: &str, entries: &[PathEntry]) {
     let segments: Vec<&str> = if current.is_empty() {
@@ -1322,7 +1357,7 @@ fn print_pretty_path_output(current: &str, entries: &[PathEntry]) {
 
     let names: Vec<String> = segments
         .iter()
-        .map(|seg| resolve_segment_name(seg, entries))
+        .map(|seg| sanitize_for_display(&resolve_segment_name(seg, entries)))
         .collect();
 
     let types: Vec<String> = segments
@@ -1839,41 +1874,6 @@ fn main() {
     print_pretty_current_path(&store_file);
 }
 
-/// Return `true` for invisible Unicode code points that are not caught by
-/// `char::is_control` but can still manipulate terminal rendering or hide
-/// content from the viewer (bidirectional overrides, zero-width characters,
-/// BOM, and similar format characters).
-fn is_invisible_unicode(c: char) -> bool {
-    matches!(
-        c,
-        '\u{00AD}'               // Soft hyphen
-        | '\u{200B}'..='\u{200D}' // Zero-width space / non-joiner / joiner
-        | '\u{200E}' | '\u{200F}' // LTR mark / RTL mark
-        | '\u{202A}'..='\u{202E}' // Directional embedding/override characters
-        | '\u{2060}'..='\u{2064}' // Word joiner and invisible operators
-        | '\u{2066}'..='\u{206F}' // Directional isolates and deprecated format chars
-        | '\u{FEFF}'              // BOM / zero-width no-break space
-        | '\u{FFF9}'..='\u{FFFB}' // Interlinear annotation characters
-    )
-}
-
-/// Replace every control character and invisible Unicode code point in `value`
-/// with its `\u{XXXX}` escape sequence so that the output is safe to display
-/// in a terminal without triggering ANSI sequences, audible bells, cursor
-/// movement, bidirectional overrides, or other side-effects.
-fn sanitize_for_display(value: &str) -> String {
-    let mut result = String::with_capacity(value.len());
-    for c in value.chars() {
-        if c.is_control() || is_invisible_unicode(c) {
-            use std::fmt::Write as _;
-            let _ = write!(result, "\\u{{{:04X}}}", c as u32);
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2337,6 +2337,23 @@ mod tests {
     }
 
     #[test]
+    /// Ensure list formatting sanitizes store-derived control and invisible characters.
+    fn format_list_entry_sanitizes_store_derived_fields() {
+        let entry = PathEntry::new("/usr/local/bin", "bad\u{001B}name")
+            .with_options(
+                AutosetMode::NoAuto,
+                PlacementMode::Postfix,
+                ProtectionMode::Unprotected,
+            )
+            .with_line_number(1);
+
+        assert_eq!(
+            format_list_entry(&entry),
+            "/usr/local/bin [bad\\u{001B}name] (noauto)"
+        );
+    }
+
+    #[test]
     /// Ensure missing third fields are interpreted as `auto` for manual edits.
     fn parse_entry_line_missing_third_field_defaults_to_auto() {
         let entry = parse_entry_line("'/tmp/tools' [tools]", 2).unwrap();
@@ -2596,71 +2613,70 @@ mod tests {
     }
 
     #[test]
-    /// Normal printable ASCII passes through `sanitize_for_display` unchanged.
-    fn sanitize_for_display_returns_normal_ascii_unchanged() {
-        assert_eq!(sanitize_for_display("hello /tmp/path"), "hello /tmp/path");
-    }
-
-    #[test]
-    /// ESC character (0x1B) is replaced with its Unicode escape representation.
-    fn sanitize_for_display_escapes_ansi_escape_sequence() {
-        assert_eq!(sanitize_for_display("\x1b[31m"), "\\u{001B}[31m");
-    }
-
-    #[test]
-    /// BEL character (0x07) is replaced with its Unicode escape representation.
-    fn sanitize_for_display_escapes_bell_character() {
-        assert_eq!(sanitize_for_display("\x07"), "\\u{0007}");
-    }
-
-    #[test]
-    /// NUL byte (0x00) is replaced with its Unicode escape representation.
-    fn sanitize_for_display_escapes_null_byte() {
-        assert_eq!(sanitize_for_display("\x00"), "\\u{0000}");
-    }
-
-    #[test]
-    /// Carriage return (0x0D) is replaced with its Unicode escape representation.
-    fn sanitize_for_display_escapes_carriage_return() {
-        assert_eq!(sanitize_for_display("\r"), "\\u{000D}");
-    }
-
-    #[test]
-    /// Right-to-left override (U+202E) is replaced with its Unicode escape representation.
-    fn sanitize_for_display_escapes_bidi_override_character() {
-        assert_eq!(sanitize_for_display("\u{202E}"), "\\u{202E}");
-    }
-
-    #[test]
-    /// Zero-width space (U+200B) is replaced with its Unicode escape representation.
-    fn sanitize_for_display_escapes_zero_width_space() {
-        assert_eq!(sanitize_for_display("\u{200B}"), "\\u{200B}");
-    }
-
-    #[test]
-    /// Safe chars adjacent to unsafe chars are preserved; only unsafe chars are escaped.
-    fn sanitize_for_display_handles_mixed_safe_and_unsafe_content() {
-        assert_eq!(sanitize_for_display("/tmp/\x1bpath"), "/tmp/\\u{001B}path");
-    }
-
-    #[test]
-    /// `is_invisible_unicode` returns true for the RTL override character (U+202E).
-    fn is_invisible_unicode_returns_true_for_rtl_override() {
-        assert!(is_invisible_unicode('\u{202E}'));
-    }
-
-    #[test]
-    /// `is_invisible_unicode` returns true for zero-width space (U+200B).
-    fn is_invisible_unicode_returns_true_for_zero_width_space() {
+    /// Ensure invisible Unicode detection covers zero-width and bidi controls.
+    fn is_invisible_unicode_detects_security_relevant_codepoints() {
         assert!(is_invisible_unicode('\u{200B}'));
-    }
-
-    #[test]
-    /// `is_invisible_unicode` returns false for ordinary printable characters.
-    fn is_invisible_unicode_returns_false_for_printable_ascii() {
+        assert!(is_invisible_unicode('\u{202E}'));
+        assert!(is_invisible_unicode('\u{FEFF}'));
         assert!(!is_invisible_unicode('a'));
         assert!(!is_invisible_unicode('/'));
         assert!(!is_invisible_unicode(' '));
         assert!(!is_invisible_unicode('Z'));
+    }
+
+    #[test]
+    /// Ensure display sanitization escapes control and invisible Unicode characters.
+    fn sanitize_for_display_escapes_control_and_invisible_characters() {
+        let value = "safe\u{001B}x\u{200B}y\nz";
+
+        assert_eq!(
+            sanitize_for_display(value),
+            "safe\\u{001B}x\\u{200B}y\\u{000A}z"
+        );
+    }
+
+    #[test]
+    /// Ensure display sanitization escapes individual security-relevant characters.
+    fn sanitize_for_display_escapes_individual_security_relevant_characters() {
+        assert_eq!(sanitize_for_display("\x1b[31m"), "\\u{001B}[31m");
+        assert_eq!(sanitize_for_display("\x07"), "\\u{0007}");
+        assert_eq!(sanitize_for_display("\x00"), "\\u{0000}");
+        assert_eq!(sanitize_for_display("\r"), "\\u{000D}");
+        assert_eq!(sanitize_for_display("\u{202E}"), "\\u{202E}");
+        assert_eq!(sanitize_for_display("\u{200B}"), "\\u{200B}");
+        assert_eq!(sanitize_for_display("/tmp/\x1bpath"), "/tmp/\\u{001B}path");
+    }
+
+    #[test]
+    /// Ensure display sanitization leaves ordinary printable text unchanged.
+    fn sanitize_for_display_preserves_plain_text() {
+        assert_eq!(sanitize_for_display("hello /tmp/path"), "hello /tmp/path");
+        let value = "/usr/local/bin [cargo] (auto)";
+
+        assert_eq!(sanitize_for_display(value), value);
+    }
+
+    #[test]
+    /// Ensure non-fatal issue collection sanitizes store-derived control characters.
+    fn collect_store_issue_messages_nonfatal_sanitizes_store_derived_text() {
+        let store_file = Path::new("/tmp/test.path");
+        let diagnostics = vec![entry_diagnostic(
+            4,
+            "'/tmp/safe' [bad\u{001B}name] (auto,odd\u{001B}opt)",
+            EntryDiagnosticKind::UnknownOption {
+                option: "odd\u{001B}opt".to_string(),
+            },
+        )];
+        let entries = vec![PathEntry::new("/tmp/safe", "bad\u{001B}name").with_line_number(4)];
+
+        let messages = collect_store_issue_messages_nonfatal(store_file, &entries, &diagnostics);
+
+        assert!(messages.iter().all(|message| !message.contains('\u{001B}')));
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("odd\\u{001B}opt")));
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("bad\\u{001B}name")));
     }
 }
