@@ -1303,6 +1303,7 @@ fn remove_from_path(current: &str, location: &str, raw_path_arg: Option<&str>) -
 }
 
 /// Format a stored entry for human-readable list output.
+#[cfg(test)]
 fn format_list_entry(entry: &PathEntry) -> String {
     format!(
         "{} [{}] ({})",
@@ -1310,6 +1311,74 @@ fn format_list_entry(entry: &PathEntry) -> String {
         sanitize_for_display(&entry.name),
         format_entry_options(entry)
     )
+}
+
+/// Return formatted lines for a tabular list of stored entries, including the header and separator.
+fn format_list_table(entries: &[PathEntry]) -> Vec<String> {
+    let sanitized_locations: Vec<String> = entries
+        .iter()
+        .map(|e| sanitize_for_display(&e.location))
+        .collect();
+    let sanitized_names: Vec<String> = entries
+        .iter()
+        .map(|e| sanitize_for_display(&e.name))
+        .collect();
+    let options: Vec<String> = entries.iter().map(format_entry_options).collect();
+
+    let path_col_width = sanitized_locations
+        .iter()
+        .map(|s| s.len())
+        .max()
+        .unwrap_or(0)
+        .max("PATH".len());
+
+    let name_col_width = sanitized_names
+        .iter()
+        .map(|n| n.len())
+        .max()
+        .unwrap_or(0)
+        .max("NAME".len());
+
+    let opts_col_width = options
+        .iter()
+        .map(|o| o.len())
+        .max()
+        .unwrap_or(0)
+        .max("OPTIONS".len());
+
+    let header = format!(
+        "{:<path_width$}  {:<name_width$}  OPTIONS",
+        "PATH",
+        "NAME",
+        path_width = path_col_width,
+        name_width = name_col_width,
+    );
+    let separator = format!(
+        "{:-<path_width$}  {:-<name_width$}  {:-<opts_width$}",
+        "",
+        "",
+        "",
+        path_width = path_col_width,
+        name_width = name_col_width,
+        opts_width = opts_col_width,
+    );
+
+    let mut lines = vec![header, separator];
+    for ((loc, name), opts) in sanitized_locations
+        .iter()
+        .zip(sanitized_names.iter())
+        .zip(options.iter())
+    {
+        lines.push(format!(
+            "{:<path_width$}  {:<name_width$}  {}",
+            loc,
+            name,
+            opts,
+            path_width = path_col_width,
+            name_width = name_col_width,
+        ));
+    }
+    lines
 }
 
 /// Return `true` for invisible Unicode code points that are not caught by
@@ -1661,8 +1730,8 @@ fn handle_list(store_file: &Path) {
         return;
     }
 
-    for entry in entries {
-        println!("{}", format_list_entry(&entry));
+    for line in format_list_table(&entries) {
+        println!("{}", line);
     }
 }
 
@@ -2351,6 +2420,42 @@ mod tests {
             format_list_entry(&entry),
             "/usr/local/bin [bad\\u{001B}name] (noauto)"
         );
+    }
+
+    #[test]
+    /// Ensure `format_list_table` produces a header, separator, and aligned data rows.
+    fn format_list_table_produces_tabular_header_and_rows() {
+        let mut noauto = test_entry("/opt/mynoauto", "noentry");
+        noauto.auto_mode = AutosetMode::NoAuto;
+        let entries = vec![test_entry("/usr/local/bin", "tools"), noauto];
+
+        let lines = format_list_table(&entries);
+        assert!(lines.len() >= 4, "expected header + separator + 2 rows");
+
+        // Header contains all column labels
+        assert!(lines[0].contains("PATH"), "header must contain PATH");
+        assert!(lines[0].contains("NAME"), "header must contain NAME");
+        assert!(lines[0].contains("OPTIONS"), "header must contain OPTIONS");
+
+        // Separator consists only of dashes and spaces
+        assert!(
+            lines[1].chars().all(|c| c == '-' || c == ' '),
+            "separator must contain only dashes and spaces"
+        );
+
+        // Data rows contain the expected values
+        assert!(
+            lines[2].contains("/usr/local/bin"),
+            "row 1 must contain location"
+        );
+        assert!(lines[2].contains("tools"), "row 1 must contain name");
+        assert!(lines[2].contains("auto"), "row 1 must contain options");
+        assert!(
+            lines[3].contains("/opt/mynoauto"),
+            "row 2 must contain location"
+        );
+        assert!(lines[3].contains("noentry"), "row 2 must contain name");
+        assert!(lines[3].contains("noauto"), "row 2 must contain options");
     }
 
     #[test]

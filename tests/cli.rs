@@ -258,7 +258,14 @@ fn test_cmd_uses_provided_path_and_store_file() {
 
     let mut list_cmd = test_cmd(dir, "");
     let list_out = get_stdout(list_cmd.arg("list"));
-    assert!(list_out.contains("/tmp/helper [helper] (auto)"));
+    assert!(
+        list_out.contains("/tmp/helper"),
+        "location must appear in list output"
+    );
+    assert!(
+        list_out.contains("helper"),
+        "name must appear in list output"
+    );
 }
 
 /// Runs a command that is expected to fail and returns stderr as UTF-8 text.
@@ -472,7 +479,15 @@ fn list_shows_entries() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/foo [foo] (auto)"));
+    assert!(
+        out_str.contains("/foo"),
+        "location must appear in list output"
+    );
+    assert!(out_str.contains("foo"), "name must appear in list output");
+    assert!(
+        out_str.contains("auto"),
+        "options must appear in list output"
+    );
     assert!(!out_str.contains("/bar"));
 }
 
@@ -492,8 +507,38 @@ fn list_shows_noauto_status() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/opt/auto [a] (auto)"));
-    assert!(out_str.contains("/opt/no [n] (noauto)"));
+    assert!(
+        out_str.contains("/opt/auto"),
+        "auto entry location must appear"
+    );
+    assert!(
+        out_str.contains("/opt/no"),
+        "noauto entry location must appear"
+    );
+    assert!(out_str.contains("noauto"), "noauto option must appear");
+}
+
+/// `list` output should have a header row with PATH, NAME, and OPTIONS columns.
+#[test]
+fn list_shows_columnar_header() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "auto_noauto").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let out = get_stdout(cmd.arg("list"));
+    assert!(out.contains("PATH"), "list output must include PATH header");
+    assert!(out.contains("NAME"), "list output must include NAME header");
+    assert!(
+        out.contains("OPTIONS"),
+        "list output must include OPTIONS header"
+    );
+    // Values still appear somewhere in the output
+    assert!(out.contains("/opt/auto"), "location must appear in output");
+    assert!(
+        out.contains("noauto"),
+        "noauto option must appear in output"
+    );
 }
 
 /// `list` should print a message when the configured store file is missing.
@@ -667,8 +712,11 @@ fn list_accepts_system_paths_in_store_file() {
 
     let mut cmd = test_cmd(dir, "");
     let out = get_stdout(cmd.arg("list"));
-    assert!(out.contains("/bin [custombin] (auto)"));
-    assert!(out.contains("/usr/bin [customusrbin] (noauto)"));
+    assert!(out.contains("/bin"), "system bin location must appear");
+    assert!(out.contains("custombin"), "system bin name must appear");
+    assert!(out.contains("/usr/bin"), "usr/bin location must appear");
+    assert!(out.contains("customusrbin"), "usr/bin name must appear");
+    assert!(out.contains("noauto"), "noauto option must appear");
 }
 
 /// Stored built-in system paths should pass verification without warnings or errors.
@@ -710,8 +758,17 @@ fn list_accepts_known_paths_in_store_file() {
 
     let mut cmd = test_cmd(dir, "");
     let out = get_stdout(cmd.arg("list"));
-    assert!(out.contains("/opt/homebrew/bin [brewbin] (auto)"));
-    assert!(out.contains("/opt/homebrew/sbin [brewsbin] (noauto)"));
+    assert!(
+        out.contains("/opt/homebrew/bin"),
+        "homebrew bin location must appear"
+    );
+    assert!(out.contains("brewbin"), "homebrew bin name must appear");
+    assert!(
+        out.contains("/opt/homebrew/sbin"),
+        "homebrew sbin location must appear"
+    );
+    assert!(out.contains("brewsbin"), "homebrew sbin name must appear");
+    assert!(out.contains("noauto"), "noauto option must appear");
 }
 
 /// Stored known extra paths should pass verification without warnings or errors.
@@ -1241,8 +1298,14 @@ fn list_normalizes_trailing_slash_from_store_file() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/opt/tools [tools] (auto)"));
-    assert!(!out_str.contains("/opt/tools/ [tools] (auto)"));
+    assert!(
+        out_str.contains("/opt/tools"),
+        "normalized location must appear"
+    );
+    assert!(
+        !out_str.contains("/opt/tools/"),
+        "trailing slash must be stripped in output"
+    );
 }
 
 /// Stored relative locations should be rejected during startup validation.
@@ -1685,7 +1748,10 @@ fn list_reads_quoted_location_with_spaces() {
         .stdout
         .clone();
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("/opt/my tools [tools] (auto)"));
+    assert!(
+        out_str.contains("/opt/my tools"),
+        "quoted location with space must appear in list output"
+    );
 }
 
 /// `load` should add only `auto` entries and skip `noauto` entries.

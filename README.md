@@ -160,6 +160,16 @@ path add cargo    # equivalent to: path add /home/$USER/.cargo/bin
 path list
 ```
 
+Displays stored entries in a tabular format with aligned columns:
+
+```
+PATH               NAME     OPTIONS
+-----------------  -------  -------
+/usr/local/bin     cargo    auto
+/opt/homebrew/bin  brew     auto,pre
+/opt/tools         tools    noauto
+```
+
 ### Delete a Stored Entry
 
 Removes the entry from `~/.path` but does not change the current PATH:
