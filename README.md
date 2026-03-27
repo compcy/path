@@ -40,6 +40,21 @@ missing, output still succeeds and prints a warning to stderr.
 cargo install --path .
 ```
 
+### Install with Homebrew
+
+Install from the published tap:
+
+```sh
+brew tap compcy/tap
+brew install compcy/tap/path
+```
+
+Then add this to your `~/.zshrc`:
+
+```sh
+. "$(brew --prefix)/opt/path/share/path/path-wrapper.sh"
+```
+
 ### Build and run directly
 
 ```sh
@@ -67,11 +82,12 @@ PATH_CLI_BIN="$HOME/git/path/target/debug/path"
 . "$HOME/git/path/path-wrapper.sh"
 ```
 
-For stricter hardening, you can pin trusted install locations and checksum the binary:
+For stricter hardening, pin a trusted binary path, restrict allowed locations,
+and verify the binary checksum before sourcing the wrapper:
 
 ```sh
-PATH_CLI_BIN="/opt/homebrew/bin/path"
-PATH_CLI_ALLOWLIST="/opt/homebrew/bin:/usr/local/bin/path"
+PATH_CLI_BIN="/absolute/path/to/path"
+PATH_CLI_ALLOWLIST="/absolute/trusted/bin:/another/absolute/trusted/path"
 PATH_CLI_SHA256="$(shasum -a 256 "$PATH_CLI_BIN" | awk '{print $1}')"
 . "$HOME/git/path/path-wrapper.sh"
 ```
