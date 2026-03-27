@@ -255,7 +255,8 @@ Commands that read stored entries (`add`, `remove`, `delete`, `list`, `load`,
 
 - a nameless entry
 - a relative or non-canonical stored location
-- a stored location containing `:`
+- a stored location containing `:` or shell metacharacters
+- a stored location containing Unicode control characters (ASCII and C1 range) or invisible Unicode (zero-width characters, bidirectional overrides, etc.) — these are rejected to prevent them from silently reaching the PATH
 - a non-alphanumeric name
 - duplicate names
 

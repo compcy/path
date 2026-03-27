@@ -1175,6 +1175,17 @@ fn validate_and_canonicalize_cli_path_argument(path: &str) -> String {
         std::process::exit(1);
     }
 
+    if path
+        .chars()
+        .any(|c| c.is_control() || is_invisible_unicode(c))
+    {
+        eprintln!(
+            "error: path '{}' must not contain control or invisible Unicode characters",
+            sanitize_for_display(path)
+        );
+        std::process::exit(1);
+    }
+
     if contains_path_separator(path) {
         eprintln!("error: path '{}' must not contain ':'", path);
         std::process::exit(1);
@@ -1201,7 +1212,12 @@ fn is_store_location_canonical_like(location: &str) -> bool {
     // metacharacters in locations to prevent parser ambiguity and shell
     // injection via crafted entries.
     if location.chars().any(|character| {
-        character.is_ascii_control()
+        // is_control() covers both ASCII controls (U+0000–U+001F, U+007F) and
+        // the C1 Unicode control range (U+0080–U+009F, e.g. U+009B CSI).
+        // is_invisible_unicode() covers zero-width and bidi-override characters
+        // that char::is_control() does not catch.
+        character.is_control()
+            || is_invisible_unicode(character)
             || matches!(
                 character,
                 '[' | ']'
@@ -2232,6 +2248,22 @@ mod tests {
         assert!(!is_store_location_canonical_like("/tmp/ev^il"));
         assert!(!is_store_location_canonical_like("/tmp/ev\til")); // tab
         assert!(!is_store_location_canonical_like("/tmp/ev\nil")); // newline
+    }
+
+    #[test]
+    /// Ensure `is_store_location_canonical_like` rejects non-ASCII Unicode control
+    /// characters (C1 range) and invisible Unicode, which `is_ascii_control` misses.
+    fn is_store_location_canonical_like_rejects_unicode_control_and_invisible_chars() {
+        // C1 control: U+0085 NEXT LINE (UTF-8: C2 85) — not caught by is_ascii_control
+        assert!(!is_store_location_canonical_like("/tmp/\u{0085}evil"));
+        // C1 control: U+009B CSI (UTF-8: C2 9B) — starts ANSI escape sequences
+        assert!(!is_store_location_canonical_like("/tmp/\u{009B}[31mred"));
+        // Invisible Unicode: U+200B zero-width space
+        assert!(!is_store_location_canonical_like("/tmp/\u{200B}evil"));
+        // Invisible Unicode: U+202E RIGHT-TO-LEFT OVERRIDE (bidi spoofing)
+        assert!(!is_store_location_canonical_like("/tmp/\u{202E}evil"));
+        // Valid non-ASCII (accented chars) should still be allowed
+        assert!(is_store_location_canonical_like("/opt/résumé"));
     }
 
     #[test]

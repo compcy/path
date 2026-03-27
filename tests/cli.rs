@@ -1401,6 +1401,8 @@ fn list_rejects_delimiter_malicious_cases() {
         "malicious/location_redirect_less",
         "malicious/location_redirect_greater",
         "malicious/location_hash",
+        "malicious/location_c1_control",
+        "malicious/location_invisible_unicode",
     ];
 
     for fixture_name in cases {
@@ -2491,5 +2493,66 @@ fn list_sanitizes_control_chars_in_location_field_output() {
     assert!(
         !stderr_bytes.contains(&0x1b_u8),
         "stderr must not contain a raw ESC byte"
+    );
+}
+
+/// A store file with a C1 Unicode control character (U+0085 NEXT LINE) in the
+/// location must be rejected — these are not caught by `is_ascii_control` but
+/// are valid Unicode Cc category characters and must not reach the PATH.
+#[test]
+fn list_rejects_c1_control_char_in_location() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "malicious/location_c1_control").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let assert = cmd.arg("list").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        stderr.contains("error:"),
+        "expected an error for C1 control in location, got: {}",
+        stderr
+    );
+}
+
+/// A store file with an invisible Unicode character (U+200B zero-width space) in
+/// the location must be rejected — these are not caught by `char::is_control` and
+/// must not reach the PATH.
+#[test]
+fn list_rejects_invisible_unicode_in_location() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+    copy_fixture_to_temp_store(dir, "malicious/location_invisible_unicode").unwrap();
+
+    let mut cmd = test_cmd(dir, "");
+    let assert = cmd.arg("list").assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        stderr.contains("error:"),
+        "expected an error for invisible Unicode in location, got: {}",
+        stderr
+    );
+}
+
+/// `path add` must reject a location that contains a C1 Unicode control character
+/// so it is never emitted to the PATH export statement.
+#[test]
+fn add_rejects_location_with_unicode_control_char() {
+    let temp = tempdir().unwrap();
+    let dir = temp.path();
+
+    let mut cmd = test_cmd(dir, "");
+    // U+0085 NEXT LINE embedded directly in the argument string
+    let assert = cmd
+        .arg("add")
+        .arg("/tmp/\u{0085}evil")
+        .arg("badentry")
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        stderr.contains("error:"),
+        "expected an error for control char in add location, got: {}",
+        stderr
     );
 }

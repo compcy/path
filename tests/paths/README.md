@@ -82,6 +82,8 @@ metacharacter hardening tests. These file names use the pattern
 - `options_open_brace.path` - options include `{`
 - `options_open_bracket.path` - options include `[`
 - `options_open_parenthesis.path` - options include `(`
+- `location_c1_control.path` - location includes a C1 Unicode control character (U+0085 NEXT LINE)
+- `location_invisible_unicode.path` - location includes an invisible Unicode character (U+200B zero-width space)
 
 Maintenance note:
 When adding a new file under `tests/paths/malicious/`, update both this section
