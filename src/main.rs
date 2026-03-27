@@ -996,7 +996,7 @@ fn validate_entries(store_file: &Path) -> io::Result<()> {
 /// Build the command-line interface definition used by `clap`.
 fn build_cli() -> App<'static, 'static> {
     App::new("path")
-        .version("0.1.0")
+        .version("0.5.0")
         .about("Utility for inspecting and manipulating the PATH environment variable")
         .arg(
             Arg::with_name("store_file")
