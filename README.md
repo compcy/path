@@ -34,11 +34,10 @@ missing, output still succeeds and prints a warning to stderr.
 
 ## Installation
 
-### Install with Cargo
+Install Homebrew first: [brew.sh](https://brew.sh)
 
-```sh
-cargo install --path .
-```
+Homebrew installation is supported on macOS and Linux. Windows is not
+supported.
 
 ### Install with Homebrew
 
