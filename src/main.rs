@@ -195,6 +195,18 @@ fn known_extra_paths() -> &'static [PathEntry] {
                     PlacementMode::Postfix,
                     ProtectionMode::Unprotected,
                 ),
+                builtin_path_entry(
+                    "/home/linuxbrew/.linuxbrew/bin",
+                    "homebrewbin",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Unprotected,
+                ),
+                builtin_path_entry(
+                    "/home/linuxbrew/.linuxbrew/sbin",
+                    "homebrewsbin",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Unprotected,
+                ),
             ];
 
             if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
