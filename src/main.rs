@@ -197,13 +197,13 @@ fn known_extra_paths() -> &'static [PathEntry] {
                 ),
                 builtin_path_entry(
                     "/home/linuxbrew/.linuxbrew/bin",
-                    "homebrewbin",
+                    "linuxbrewbin",
                     PlacementMode::Postfix,
                     ProtectionMode::Unprotected,
                 ),
                 builtin_path_entry(
                     "/home/linuxbrew/.linuxbrew/sbin",
-                    "homebrewsbin",
+                    "linuxbrewsbin",
                     PlacementMode::Postfix,
                     ProtectionMode::Unprotected,
                 ),
