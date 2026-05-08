@@ -2556,3 +2556,326 @@ fn add_rejects_location_with_unicode_control_char() {
         stderr
     );
 }
+
+/// Create a temporary paths.d directory structure for helper subcommand testing.
+///
+/// Returns a tuple of (temp_dir, paths_d_dir) where paths_d_dir is the directory
+/// containing the paths.d files.
+fn setup_paths_d_dir() -> io::Result<(tempfile::TempDir, PathBuf)> {
+    let temp = tempdir()?;
+    let paths_d = temp.path().join("paths.d");
+    fs::create_dir(&paths_d)?;
+    Ok((temp, paths_d))
+}
+
+/// Helper subcommand should output a colon-separated PATH string from paths.d files.
+#[test]
+fn helper_outputs_colon_separated_paths() {
+    let (temp, paths_d) = setup_paths_d_dir().unwrap();
+
+    // Create paths.d files similar to /etc/paths.d structure
+    fs::write(paths_d.join("10-system"), "/usr/local/bin\n/usr/bin\n").unwrap();
+    fs::write(paths_d.join("20-cargo"), "/home/user/.cargo/bin\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(temp.path())
+        .arg("helper")
+        .arg("--paths-d")
+        .arg(&paths_d);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+
+    // Output should be colon-separated paths
+    assert!(
+        stdout.contains("/usr/local/bin"),
+        "expected /usr/local/bin in output: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("/usr/bin"),
+        "expected /usr/bin in output: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains(".cargo/bin"),
+        "expected .cargo/bin in output: {}",
+        stdout
+    );
+
+    // Paths should be colon-separated
+    let path_str = stdout.trim();
+    assert!(
+        path_str.contains(":"),
+        "paths should be colon-separated: {}",
+        path_str
+    );
+}
+
+/// Helper subcommand should read files from paths.d in sorted order.
+#[test]
+fn helper_respects_paths_d_file_order() {
+    let (temp, paths_d) = setup_paths_d_dir().unwrap();
+
+    // Create files in specific order - they should be read in sorted filename order
+    fs::write(paths_d.join("20-second"), "/path/second\n").unwrap();
+    fs::write(paths_d.join("10-first"), "/path/first\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(temp.path())
+        .arg("helper")
+        .arg("--paths-d")
+        .arg(&paths_d);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+
+    // First path should come before second path in output
+    let first_pos = stdout.find("/path/first").expect("expected /path/first");
+    let second_pos = stdout.find("/path/second").expect("expected /path/second");
+    assert!(
+        first_pos < second_pos,
+        "files should be read in sorted order; got: {}",
+        stdout
+    );
+}
+
+/// Helper subcommand with empty paths.d should output empty string.
+#[test]
+fn helper_with_empty_paths_d_outputs_empty_string() {
+    let (temp, paths_d) = setup_paths_d_dir().unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(temp.path())
+        .arg("helper")
+        .arg("--paths-d")
+        .arg(&paths_d);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+
+    // Output should be empty or just whitespace
+    assert!(
+        stdout.trim().is_empty(),
+        "expected empty output for empty paths.d: {}",
+        stdout
+    );
+}
+
+/// Helper subcommand with -c option should output shell export format.
+#[test]
+fn helper_with_c_option_outputs_export_format() {
+    let (temp, paths_d) = setup_paths_d_dir().unwrap();
+
+    fs::write(paths_d.join("10-test"), "/usr/local/bin\n/usr/bin\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(temp.path())
+        .arg("helper")
+        .arg("-c")
+        .arg("--paths-d")
+        .arg(&paths_d);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+
+    // Output should be export format: export PATH='...'
+    assert!(
+        stdout.contains("export PATH="),
+        "expected export format with -c option; got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("/usr/local/bin"),
+        "expected /usr/local/bin in output: {}",
+        stdout
+    );
+}
+
+/// Helper subcommand with -s option should output shell variable assignment format.
+#[test]
+fn helper_with_s_option_outputs_assignment_format() {
+    let (temp, paths_d) = setup_paths_d_dir().unwrap();
+
+    fs::write(paths_d.join("10-test"), "/usr/local/bin\n/usr/bin\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(temp.path())
+        .arg("helper")
+        .arg("-s")
+        .arg("--paths-d")
+        .arg(&paths_d);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+
+    // Output should be assignment format: PATH='...'
+    assert!(
+        stdout.starts_with("PATH="),
+        "expected assignment format with -s option; got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("/usr/local/bin"),
+        "expected /usr/local/bin in output: {}",
+        stdout
+    );
+}
+
+/// On macOS only: compare path helper output with system path_helper for paths.d.
+///
+/// This verifies that our implementation correctly reads and orders paths from
+/// /etc/paths.d, matching what the system's path_helper produces for those directories.
+/// Note: system path_helper also reads /etc/paths, but our implementation only reads
+/// /etc/paths.d as designed.
+#[test]
+#[cfg(target_os = "macos")]
+fn helper_output_matches_system_path_helper() {
+    use std::process::Command;
+
+    // Run the system path_helper to get its output
+    let system_helper_output = Command::new("/usr/libexec/path_helper")
+        .output()
+        .expect("failed to run system path_helper");
+
+    let system_helper_stdout = String::from_utf8_lossy(&system_helper_output.stdout).to_string();
+
+    // Extract the PATH value from system output: PATH="..."; export PATH;
+    let system_path = if let Some(start) = system_helper_stdout.find("PATH=\"") {
+        let after_path = &system_helper_stdout[start + 6..];
+        if let Some(end) = after_path.find('"') {
+            &after_path[..end]
+        } else {
+            ""
+        }
+    } else {
+        ""
+    };
+
+    // Run our path helper command without any options (raw colon-separated output)
+    let our_helper_output = Command::new(env!("CARGO_BIN_EXE_path"))
+        .arg("helper")
+        .output()
+        .expect("failed to run path helper");
+
+    let our_helper_stdout = String::from_utf8_lossy(&our_helper_output.stdout).to_string();
+    let our_path = our_helper_stdout.trim();
+
+    // Extract just the paths.d portion from the system PATH by looking for
+    // paths that are in /etc/paths.d files
+    let system_paths_d_entries: Vec<&str> = system_path.split(':').collect();
+    let our_paths_entries: Vec<&str> = our_path.split(':').collect();
+
+    // All of our paths should be in the system's path (in the same order)
+    // We verify this by checking that our path entries appear in sequence
+    // in the system's path output
+    let mut system_idx = 0;
+    for our_entry in &our_paths_entries {
+        if our_entry.is_empty() {
+            continue;
+        }
+        // Find this entry in the remaining system paths
+        let found = system_paths_d_entries[system_idx..]
+            .iter()
+            .position(|&e| e == *our_entry);
+        assert!(
+            found.is_some(),
+            "entry '{}' from our path helper not found in system path_helper output after index {}",
+            our_entry,
+            system_idx
+        );
+        system_idx += found.unwrap() + 1;
+    }
+}
+
+/// On macOS only: verify that path helper supports all options that system path_helper supports.
+///
+/// The system path_helper supports: [-c | -s] based on its usage message.
+/// Our implementation should support at least these same options.
+#[test]
+#[cfg(target_os = "macos")]
+fn helper_supports_system_path_helper_options() {
+    use std::process::Command;
+
+    // Get the system path_helper's usage by running it with an invalid option
+    let system_usage_output = Command::new("/usr/libexec/path_helper")
+        .arg("-invalid")
+        .output()
+        .expect("failed to run system path_helper");
+
+    let system_usage = String::from_utf8_lossy(&system_usage_output.stderr);
+    // Usage message: "usage: path_helper [-c | -s]"
+
+    // Verify system path_helper supports -c
+    assert!(
+        system_usage.contains("-c"),
+        "system path_helper should support -c option"
+    );
+
+    // Verify system path_helper supports -s
+    assert!(
+        system_usage.contains("-s"),
+        "system path_helper should support -s option"
+    );
+
+    // Verify our implementation supports -c option
+    let our_c_output = Command::new(env!("CARGO_BIN_EXE_path"))
+        .arg("helper")
+        .arg("-c")
+        .arg("--paths-d")
+        .arg("/etc/paths.d")
+        .output()
+        .expect("failed to run path helper -c");
+
+    assert!(
+        our_c_output.status.success(),
+        "path helper -c should succeed"
+    );
+
+    let our_c_stdout = String::from_utf8_lossy(&our_c_output.stdout);
+    assert!(
+        our_c_stdout.contains("export PATH"),
+        "path helper -c should output export format; got: {}",
+        our_c_stdout
+    );
+
+    // Verify our implementation supports -s option
+    let our_s_output = Command::new(env!("CARGO_BIN_EXE_path"))
+        .arg("helper")
+        .arg("-s")
+        .arg("--paths-d")
+        .arg("/etc/paths.d")
+        .output()
+        .expect("failed to run path helper -s");
+
+    assert!(
+        our_s_output.status.success(),
+        "path helper -s should succeed"
+    );
+
+    let our_s_stdout = String::from_utf8_lossy(&our_s_output.stdout);
+    assert!(
+        our_s_stdout.starts_with("PATH="),
+        "path helper -s should output assignment format; got: {}",
+        our_s_stdout
+    );
+
+    // Verify our implementation's help text documents these options
+    let our_help_output = Command::new(env!("CARGO_BIN_EXE_path"))
+        .arg("helper")
+        .arg("--help")
+        .output()
+        .expect("failed to run path helper --help");
+
+    let our_help = String::from_utf8_lossy(&our_help_output.stdout);
+
+    assert!(
+        our_help.contains("-c"),
+        "path helper --help should document -c option"
+    );
+
+    assert!(
+        our_help.contains("-s"),
+        "path helper --help should document -s option"
+    );
+}
