@@ -1094,6 +1094,29 @@ fn build_cli() -> App<'static, 'static> {
             SubCommand::with_name("restore")
                 .about("Restore standard protected system paths into PATH"),
         )
+        .subcommand(
+            SubCommand::with_name("helper")
+                .about("Emulate Apple's path_helper for paths.d directories")
+                .arg(
+                    Arg::with_name("c_format")
+                        .short("c")
+                        .help("Output as shell command (export PATH='...')")
+                        .takes_value(false),
+                )
+                .arg(
+                    Arg::with_name("s_format")
+                        .short("s")
+                        .help("Output as shell variable assignment (PATH='...')")
+                        .takes_value(false),
+                )
+                .arg(
+                    Arg::with_name("paths_d")
+                        .long("paths-d")
+                        .value_name("DIRECTORY")
+                        .help("Path to the paths.d directory (default: /etc/paths.d)")
+                        .takes_value(true),
+                ),
+        )
 }
 
 /// Resolve a user-provided token to a stored location when it matches a name.
@@ -1852,6 +1875,90 @@ fn handle_restore() {
     println!("{}", format_export_path(&current));
 }
 
+/// Handle the `helper` subcommand.
+///
+/// Reads all files from the specified paths.d directory (or /etc/paths.d by default),
+/// parses each file for path entries (one per line), and outputs them as a
+/// colon-separated string matching Apple's path_helper format.
+fn handle_helper(matches: &ArgMatches) {
+    let paths_d = matches.value_of("paths_d").unwrap_or("/etc/paths.d");
+
+    let paths_d_path = Path::new(paths_d);
+
+    // Collect all paths from files in paths.d directory, in sorted filename order
+    let mut all_paths = Vec::new();
+
+    // If the directory doesn't exist, output empty string
+    if !paths_d_path.is_dir() {
+        println!();
+        return;
+    }
+
+    // Read all files from the directory
+    match fs::read_dir(paths_d_path) {
+        Ok(entries) => {
+            let mut files: Vec<_> = entries
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| {
+                    // Only process files, skip directories
+                    entry
+                        .file_type()
+                        .ok()
+                        .map(|ft| ft.is_file())
+                        .unwrap_or(false)
+                })
+                .collect();
+
+            // Sort by filename
+            files.sort_by_key(|a| a.file_name());
+
+            // Read paths from each file
+            for entry in files {
+                if let Ok(content) = fs::read_to_string(entry.path()) {
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        // Skip empty lines and comments
+                        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                            all_paths.push(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        Err(_) => {
+            // If we can't read the directory, output empty string
+            println!();
+            return;
+        }
+    }
+
+    // Determine output format
+    let is_c_format = matches.is_present("c_format");
+    let is_s_format = matches.is_present("s_format");
+
+    let path_string = if all_paths.is_empty() {
+        String::new()
+    } else {
+        all_paths.join(":")
+    };
+
+    // Output based on format flags
+    if is_c_format {
+        // Export format: export PATH='...'
+        println!("{}", format_export_path(&path_string));
+    } else if is_s_format {
+        // Assignment format: PATH='...'
+        if path_string.is_empty() {
+            println!("PATH=''");
+        } else {
+            println!("PATH='{}'", path_string);
+        }
+    } else {
+        // Default: colon-separated string
+        println!("{}", path_string);
+    }
+}
+
 /// Resolve the display name for a PATH segment.
 ///
 /// Checks stored entries first, then the built-in system path table, then
@@ -1965,6 +2072,11 @@ fn main() {
 
     if matches.subcommand_matches("restore").is_some() {
         handle_restore();
+        return;
+    }
+
+    if let Some(helper_matches) = matches.subcommand_matches("helper") {
+        handle_helper(helper_matches);
         return;
     }
 
