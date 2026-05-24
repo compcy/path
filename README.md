@@ -71,7 +71,7 @@ the wrapper script from your rc file:
 . "$HOME/git/path/path-wrapper.sh"
 ```
 
-Sourcing the wrapper defines a `path` shell function and immediately runs
+Sourcing the wrapper defines `path` and `path_helper` shell functions and immediately runs
 `path load`, applying your stored auto entries on each new terminal session.
 
 If `path` is not yet on PATH when your rc file runs, set `PATH_CLI_BIN` first:
