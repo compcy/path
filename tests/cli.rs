@@ -2828,8 +2828,8 @@ fn helper_supports_system_path_helper_options() {
 
     let our_c_stdout = String::from_utf8_lossy(&our_c_output.stdout);
     assert!(
-        our_c_stdout.contains("export PATH"),
-        "path helper -c should output export format; got: {}",
+        our_c_stdout.trim().starts_with("setenv PATH \""),
+        "path helper -c should output csh setenv format; got: {}",
         our_c_stdout
     );
 
