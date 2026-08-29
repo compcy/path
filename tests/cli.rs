@@ -2674,6 +2674,44 @@ fn helper_with_empty_paths_d_outputs_empty_string() {
     );
 }
 
+/// Helper subcommand with -c and a missing paths.d should emit an empty C-shell command.
+#[test]
+fn helper_with_c_option_and_missing_paths_d_outputs_empty_csh_command() {
+    let temp = tempdir().unwrap();
+    let missing_paths_d = temp.path().join("missing-paths.d");
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(temp.path())
+        .arg("helper")
+        .arg("-c")
+        .arg("--paths-d")
+        .arg(&missing_paths_d);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+
+    assert_eq!(stdout.trim(), "setenv PATH \"\";");
+}
+
+/// Helper subcommand with -s and a missing paths.d should emit an empty Bourne-shell command.
+#[test]
+fn helper_with_s_option_and_missing_paths_d_outputs_empty_sh_command() {
+    let temp = tempdir().unwrap();
+    let missing_paths_d = temp.path().join("missing-paths.d");
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(temp.path())
+        .arg("helper")
+        .arg("-s")
+        .arg("--paths-d")
+        .arg(&missing_paths_d);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+
+    assert_eq!(stdout.trim(), "PATH=\"\"; export PATH;");
+}
+
 /// Helper subcommand with -c option should output C-shell setenv format.
 #[test]
 fn helper_with_c_option_outputs_csh_setenv_format() {
@@ -2849,8 +2887,8 @@ fn helper_supports_system_path_helper_options() {
 
     let our_s_stdout = String::from_utf8_lossy(&our_s_output.stdout);
     assert!(
-        our_s_stdout.starts_with("PATH="),
-        "path helper -s should output assignment format; got: {}",
+        our_s_stdout.trim().starts_with("PATH=\"") && our_s_stdout.trim().ends_with("\"; export PATH;"),
+        "path helper -s should output sh assignment format; got: {}",
         our_s_stdout
     );
 

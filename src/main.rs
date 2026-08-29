@@ -1927,18 +1927,10 @@ fn handle_helper(matches: &ArgMatches) {
 
     let paths_d_path = Path::new(paths_d);
 
-    // Collect all paths from files in paths.d directory, in sorted filename order
+    // Collect all paths from files in paths.d directory, in sorted filename order.
     let mut all_paths = Vec::new();
-
-    // If the directory doesn't exist, output empty string
-    if !paths_d_path.is_dir() {
-        println!();
-        return;
-    }
-
-    // Read all files from the directory
-    match fs::read_dir(paths_d_path) {
-        Ok(entries) => {
+    if paths_d_path.is_dir() {
+        if let Ok(entries) = fs::read_dir(paths_d_path) {
             let mut files: Vec<_> = entries
                 .filter_map(|entry| entry.ok())
                 .filter(|entry| {
@@ -1966,11 +1958,6 @@ fn handle_helper(matches: &ArgMatches) {
                     }
                 }
             }
-        }
-        Err(_) => {
-            // If we can't read the directory, output empty string
-            println!();
-            return;
         }
     }
 
