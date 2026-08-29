@@ -1578,7 +1578,11 @@ fn restore_adds_standard_system_paths_to_path() {
 
     assert_eq!(
         out_str.trim(),
-        "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/System/Cryptexes/App/usr/bin:/usr/local/bin:/usr/local/sbin'"
+        if cfg!(target_os = "macos") {
+            "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/System/Cryptexes/App/usr/bin:/usr/local/bin:/usr/local/sbin'"
+        } else {
+            "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin'"
+        }
     );
 }
 
@@ -1603,7 +1607,11 @@ fn restore_does_not_duplicate_existing_system_paths() {
 
     let mut cmd: assert_cmd::Command = test_cmd(
         dir,
-        "/bin:/sbin:/usr/bin:/usr/sbin:/System/Cryptexes/App/usr/bin:/usr/local/bin:/usr/local/sbin",
+        if cfg!(target_os = "macos") {
+            "/bin:/sbin:/usr/bin:/usr/sbin:/System/Cryptexes/App/usr/bin:/usr/local/bin:/usr/local/sbin"
+        } else {
+            "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
+        },
     );
     let output = cmd
         .arg("restore")
@@ -1616,7 +1624,11 @@ fn restore_does_not_duplicate_existing_system_paths() {
 
     assert_eq!(
         out_str.trim(),
-        "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/System/Cryptexes/App/usr/bin:/usr/local/bin:/usr/local/sbin'"
+        if cfg!(target_os = "macos") {
+            "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/System/Cryptexes/App/usr/bin:/usr/local/bin:/usr/local/sbin'"
+        } else {
+            "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin'"
+        }
     );
 }
 

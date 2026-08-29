@@ -117,7 +117,7 @@ fn standard_system_paths() -> &'static [PathEntry] {
     static SYSTEM_PATHS: OnceLock<Vec<PathEntry>> = OnceLock::new();
     SYSTEM_PATHS
         .get_or_init(|| {
-            vec![
+            let system_paths = vec![
                 builtin_path_entry(
                     "/bin",
                     "sysbin",
@@ -143,12 +143,6 @@ fn standard_system_paths() -> &'static [PathEntry] {
                     ProtectionMode::Protected,
                 ),
                 builtin_path_entry(
-                    "/System/Cryptexes/App/usr/bin",
-                    "systemcryptex",
-                    PlacementMode::Postfix,
-                    ProtectionMode::Protected,
-                ),
-                builtin_path_entry(
                     "/usr/local/bin",
                     "usrlocalbin",
                     PlacementMode::Postfix,
@@ -160,7 +154,24 @@ fn standard_system_paths() -> &'static [PathEntry] {
                     PlacementMode::Postfix,
                     ProtectionMode::Protected,
                 ),
-            ]
+            ];
+
+            #[cfg(target_os = "macos")]
+            let system_paths = {
+                let mut system_paths = system_paths;
+                system_paths.insert(
+                    4,
+                    builtin_path_entry(
+                        "/System/Cryptexes/App/usr/bin",
+                        "systemcryptex",
+                        PlacementMode::Postfix,
+                        ProtectionMode::Protected,
+                    ),
+                );
+                system_paths
+            };
+
+            system_paths
         })
         .as_slice()
 }

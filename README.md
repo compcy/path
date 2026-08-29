@@ -181,8 +181,8 @@ path add /opt/locked/bin locked --protect
 ```
 
 Names must be alphanumeric and unique. The built-in system-path names
-(`sysbin`, `syssbin`, `usrbin`, `usrsbin`, `systemcryptex`, `usrlocalbin`,
-`usrlocalsbin`) are reserved and cannot be used for stored entries.
+(`sysbin`, `syssbin`, `usrbin`, `usrsbin`, `usrlocalbin`, `usrlocalsbin`, and
+on macOS `systemcryptex`) are reserved and cannot be used for stored entries.
 
 You can also use a stored name as shorthand for its location:
 
@@ -283,7 +283,8 @@ path restore
 ```
 
 Restored paths (in order): `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`,
-`/System/Cryptexes/App/usr/bin`, `/usr/local/bin`, `/usr/local/sbin`.
+`/usr/local/bin`, `/usr/local/sbin`. On macOS, `path restore` also restores
+`/System/Cryptexes/App/usr/bin` between `/usr/sbin` and `/usr/local/bin`.
 
 ## Store Validation Rules
 
