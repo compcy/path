@@ -2117,6 +2117,18 @@ mod tests {
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    // Restore `SHELL` after env-sensitive tests, even if an assertion panics.
+    struct ShellRestoreGuard(Option<std::ffi::OsString>);
+
+    impl Drop for ShellRestoreGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(shell) => std::env::set_var("SHELL", shell),
+                None => std::env::remove_var("SHELL"),
+            }
+        }
+    }
+
     /// Helper to construct a test entry with sensible defaults.
     fn test_entry(location: &str, name: &str) -> PathEntry {
         PathEntry::new(location, name)
@@ -2448,36 +2460,30 @@ mod tests {
         );
     }
 
-    #[test]
     /// Ensure helper output formatter defaults to Bourne-shell syntax for non-csh shells.
+    #[test]
     fn format_helper_output_defaults_to_bourne_shell_syntax_for_non_csh_shells() {
         let _guard = ENV_LOCK.lock().unwrap();
         let original_shell = std::env::var_os("SHELL");
+        let _shell_restore = ShellRestoreGuard(original_shell);
         std::env::set_var("SHELL", "/bin/zsh");
         assert_eq!(
             format_helper_output("/usr/bin:/bin", false, false),
             "PATH=\"/usr/bin:/bin\"; export PATH;"
         );
-        match original_shell {
-            Some(shell) => std::env::set_var("SHELL", shell),
-            None => std::env::remove_var("SHELL"),
-        }
     }
 
-    #[test]
     /// Ensure helper output formatter defaults to C-shell syntax when `$SHELL` names a C shell.
+    #[test]
     fn format_helper_output_defaults_to_c_shell_syntax_for_csh_shells() {
         let _guard = ENV_LOCK.lock().unwrap();
         let original_shell = std::env::var_os("SHELL");
+        let _shell_restore = ShellRestoreGuard(original_shell);
         std::env::set_var("SHELL", "/bin/tcsh");
         assert_eq!(
             format_helper_output("/usr/bin:/bin", false, false),
             "setenv PATH \"/usr/bin:/bin\";"
         );
-        match original_shell {
-            Some(shell) => std::env::set_var("SHELL", shell),
-            None => std::env::remove_var("SHELL"),
-        }
     }
 
     #[test]
