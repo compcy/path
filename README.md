@@ -227,26 +227,6 @@ path load
 This runs automatically at shell startup when the wrapper is sourced.
 Unknown option tokens in the store file produce a warning but do not stop loading.
 
-### Emulate macOS `path_helper`
-
-`path helper` reads the files in `/etc/paths.d` (or an alternate directory with
-`--paths-d`) and prints the resulting paths in Apple `path_helper` format.
-By default it prints a raw colon-separated PATH string.
-
-```sh
-path helper
-path helper -c
-path helper -s
-path helper --paths-d /custom/paths.d
-```
-
-The flags control output style:
-
-- `-c` prints `export PATH='...'`
-- `-s` prints `PATH='...'`
-
-Note: this command only reads `paths.d` directory entries and does not read
-`/etc/paths` itself.
 
 ### Verify the Store File
 
