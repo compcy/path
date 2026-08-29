@@ -1984,15 +1984,10 @@ fn handle_helper(matches: &ArgMatches) {
         all_paths.join(":")
     };
 
-    // Output based on format flags
-    if is_c_format {
-        println!("{}", format_helper_output(&path_string, true, false));
-    } else if is_s_format {
-        println!("{}", format_helper_output(&path_string, false, true));
-    } else {
-        // Default: colon-separated string
-        println!("{}", path_string);
-    }
+    println!(
+        "{}",
+        format_helper_output(&path_string, is_c_format, is_s_format)
+    );
 }
 
 /// Resolve the display name for a PATH segment.
