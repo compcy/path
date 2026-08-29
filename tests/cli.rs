@@ -2894,7 +2894,8 @@ fn helper_supports_system_path_helper_options() {
 
     let our_s_stdout = String::from_utf8_lossy(&our_s_output.stdout);
     assert!(
-        our_s_stdout.trim().starts_with("PATH=\"") && our_s_stdout.trim().ends_with("\"; export PATH;"),
+        our_s_stdout.trim().starts_with("PATH=\"")
+            && our_s_stdout.trim().ends_with("\"; export PATH;"),
         "path helper -s should output sh assignment format; got: {}",
         our_s_stdout
     );
@@ -2917,4 +2918,99 @@ fn helper_supports_system_path_helper_options() {
         our_help.contains("-s"),
         "path helper --help should document -s option"
     );
+}
+
+// Assert every non-empty entry in `ours` appears in `system` in the same relative order.
+#[cfg(target_os = "macos")]
+fn assert_ordered_subset(ours: &[&str], system: &[&str], context: &str) {
+    let mut system_idx = 0;
+    for entry in ours {
+        if entry.is_empty() {
+            continue;
+        }
+        let found = system[system_idx..].iter().position(|&e| e == *entry);
+        assert!(
+            found.is_some(),
+            "entry '{}' from our path helper not found in system path_helper output ({}) after index {}",
+            entry,
+            context,
+            system_idx
+        );
+        system_idx += found.unwrap() + 1;
+    }
+}
+
+/// On macOS only: compare path helper output with system path_helper for the -c and -s formats.
+///
+/// Extends the default-format comparison in `helper_output_matches_system_path_helper` to also
+/// cover the `-c` (csh `setenv`) and `-s` (sh `export`) output formats, verifying that our PATH
+/// entries for /etc/paths.d appear in the same relative order as the system path_helper produces.
+#[test]
+#[cfg(target_os = "macos")]
+fn helper_output_matches_system_path_helper_for_all_options() {
+    use std::process::Command;
+
+    // -s (sh) format: PATH="..."; export PATH;
+    let system_s_output = Command::new("/usr/libexec/path_helper")
+        .arg("-s")
+        .output()
+        .expect("failed to run system path_helper -s");
+    let system_s_stdout = String::from_utf8_lossy(&system_s_output.stdout).to_string();
+    let system_s_path = system_s_stdout
+        .find("PATH=\"")
+        .map(|start| {
+            let after = &system_s_stdout[start + "PATH=\"".len()..];
+            after.split('"').next().unwrap_or("").to_string()
+        })
+        .unwrap_or_default();
+
+    let our_s_output = Command::new(env!("CARGO_BIN_EXE_path"))
+        .arg("helper")
+        .arg("-s")
+        .output()
+        .expect("failed to run path helper -s");
+    let our_s_stdout = String::from_utf8_lossy(&our_s_output.stdout).to_string();
+    let our_s_path = our_s_stdout
+        .find("PATH=\"")
+        .map(|start| {
+            let after = &our_s_stdout[start + "PATH=\"".len()..];
+            after.split('"').next().unwrap_or("").to_string()
+        })
+        .unwrap_or_default();
+
+    let system_s_entries: Vec<&str> = system_s_path.split(':').collect();
+    let our_s_entries: Vec<&str> = our_s_path.split(':').collect();
+    assert_ordered_subset(&our_s_entries, &system_s_entries, "-s format");
+
+    // -c (csh) format: setenv PATH "...";
+    let system_c_output = Command::new("/usr/libexec/path_helper")
+        .arg("-c")
+        .output()
+        .expect("failed to run system path_helper -c");
+    let system_c_stdout = String::from_utf8_lossy(&system_c_output.stdout).to_string();
+    let system_c_path = system_c_stdout
+        .find("setenv PATH \"")
+        .map(|start| {
+            let after = &system_c_stdout[start + "setenv PATH \"".len()..];
+            after.split('"').next().unwrap_or("").to_string()
+        })
+        .unwrap_or_default();
+
+    let our_c_output = Command::new(env!("CARGO_BIN_EXE_path"))
+        .arg("helper")
+        .arg("-c")
+        .output()
+        .expect("failed to run path helper -c");
+    let our_c_stdout = String::from_utf8_lossy(&our_c_output.stdout).to_string();
+    let our_c_path = our_c_stdout
+        .find("setenv PATH \"")
+        .map(|start| {
+            let after = &our_c_stdout[start + "setenv PATH \"".len()..];
+            after.split('"').next().unwrap_or("").to_string()
+        })
+        .unwrap_or_default();
+
+    let system_c_entries: Vec<&str> = system_c_path.split(':').collect();
+    let our_c_entries: Vec<&str> = our_c_path.split(':').collect();
+    assert_ordered_subset(&our_c_entries, &system_c_entries, "-c format");
 }
