@@ -282,11 +282,10 @@ EOF
     # Check that the normalized binary paths match
     [ "$result_bin_normalized" = "$tmp_bin_normalized" ] || fail "path_helper binary path failed: got '$result_bin_normalized', expected '$tmp_bin_normalized'"
     
-    # Check that all expected arguments are present
-    echo "$result" | grep -q "^helper$" || fail "path_helper missing 'helper' argument"
-    echo "$result" | grep -q "^-c$" || fail "path_helper missing '-c' argument"
-    echo "$result" | grep -q "^--paths-d$" || fail "path_helper missing '--paths-d' argument"
-    echo "$result" | grep -q "^/tmp/custom$" || fail "path_helper missing '/tmp/custom' argument"
+    # Check that all expected arguments are forwarded exactly and in order
+    expected_arguments=$(printf '%s\n%s\n%s\n%s' "helper" "-c" "--paths-d" "/tmp/custom")
+    result_arguments=$(printf '%s\n' "$result" | tail -n +2)
+    [ "$result_arguments" = "$expected_arguments" ] || fail "path_helper arguments differed: got '$result_arguments'"
     
     pass "path_helper forwards arguments to the CLI binary"
 }
