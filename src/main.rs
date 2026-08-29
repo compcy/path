@@ -1356,7 +1356,7 @@ fn format_export_path(path: &str) -> String {
     format!("export PATH='{}'", quote_for_shell_single(path))
 }
 
-/// Format helper output for the requested shell mode.
+// Format helper output for the requested shell mode.
 fn format_helper_output(path_string: &str, is_c_format: bool, is_s_format: bool) -> String {
     let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
 
