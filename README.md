@@ -141,7 +141,7 @@ path remove -f /bin
 
 `path helper` reads the files in `/etc/paths.d` (or an alternate directory with
 `--paths-d`) and prints the resulting paths in Apple `path_helper` format.
-By default it prints a raw colon-separated PATH string.
+By default it chooses output style from `$SHELL` (C-shell for `csh`/`tcsh`, Bourne-shell otherwise).
 
 ```sh
 path helper

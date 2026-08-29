@@ -1929,18 +1929,25 @@ fn handle_helper(matches: &ArgMatches) {
         all_paths.join(":")
     };
 
+    let shell_name = env::var("SHELL")
+        .ok()
+        .and_then(|shell| {
+            Path::new(&shell)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
+    let default_c_format = matches!(shell_name.as_str(), "csh" | "tcsh");
+
     // Output based on format flags
-    if is_c_format {
+    if is_c_format || (!is_s_format && default_c_format) {
         // C-shell format: setenv PATH "...";
         let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
         println!("setenv PATH \"{}\";", escaped);
-    } else if is_s_format {
+    } else {
         // Bourne-shell format: PATH="..."; export PATH;
         let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
         println!("PATH=\"{}\"; export PATH;", escaped);
-    } else {
-        // Default: colon-separated string
-        println!("{}", path_string);
     }
 }
 
