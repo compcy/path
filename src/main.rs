@@ -1969,7 +1969,7 @@ fn handle_helper(matches: &ArgMatches) {
         if path_string.is_empty() {
             println!("PATH=''");
         } else {
-            println!("PATH='{}'", path_string);
+            println!("PATH='{}'", quote_for_shell_single(&path_string));
         }
     } else {
         // Default: colon-separated string
