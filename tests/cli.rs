@@ -2674,6 +2674,45 @@ fn helper_with_empty_paths_d_outputs_empty_string() {
     );
 }
 
+/// Helper subcommand with missing paths.d should keep -c/-s output formats.
+#[test]
+fn helper_with_missing_paths_d_keeps_shell_output_format() {
+    let temp = tempdir().unwrap();
+    let missing_paths_d = temp.path().join("missing-paths.d");
+
+    let mut c_cmd = cargo::cargo_bin_cmd!("path");
+    c_cmd
+        .current_dir(temp.path())
+        .arg("helper")
+        .arg("-c")
+        .arg("--paths-d")
+        .arg(&missing_paths_d);
+    let c_output = c_cmd.assert().success().get_output().stdout.clone();
+    let c_stdout = String::from_utf8_lossy(&c_output);
+    assert_eq!(
+        c_stdout.trim(),
+        "setenv PATH \"\";",
+        "expected csh format even when paths.d is missing; got: {}",
+        c_stdout.trim()
+    );
+
+    let mut s_cmd = cargo::cargo_bin_cmd!("path");
+    s_cmd
+        .current_dir(temp.path())
+        .arg("helper")
+        .arg("-s")
+        .arg("--paths-d")
+        .arg(&missing_paths_d);
+    let s_output = s_cmd.assert().success().get_output().stdout.clone();
+    let s_stdout = String::from_utf8_lossy(&s_output);
+    assert_eq!(
+        s_stdout.trim(),
+        "PATH=\"\"; export PATH;",
+        "expected sh format even when paths.d is missing; got: {}",
+        s_stdout.trim()
+    );
+}
+
 /// Helper subcommand with -c option should output C-shell `setenv` format.
 #[test]
 fn helper_with_c_option_outputs_export_format() {

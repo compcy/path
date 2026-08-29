@@ -1888,47 +1888,34 @@ fn handle_helper(matches: &ArgMatches) {
     // Collect all paths from files in paths.d directory, in sorted filename order
     let mut all_paths = Vec::new();
 
-    // If the directory doesn't exist, output empty string
-    if !paths_d_path.is_dir() {
-        println!();
-        return;
-    }
+    // Read all files from the directory if it exists.
+    if let Ok(entries) = fs::read_dir(paths_d_path) {
+        let mut files: Vec<_> = entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                // Only process files, skip directories
+                entry
+                    .file_type()
+                    .ok()
+                    .map(|ft| ft.is_file())
+                    .unwrap_or(false)
+            })
+            .collect();
 
-    // Read all files from the directory
-    match fs::read_dir(paths_d_path) {
-        Ok(entries) => {
-            let mut files: Vec<_> = entries
-                .filter_map(|entry| entry.ok())
-                .filter(|entry| {
-                    // Only process files, skip directories
-                    entry
-                        .file_type()
-                        .ok()
-                        .map(|ft| ft.is_file())
-                        .unwrap_or(false)
-                })
-                .collect();
+        // Sort by filename
+        files.sort_by_key(|a| a.file_name());
 
-            // Sort by filename
-            files.sort_by_key(|a| a.file_name());
-
-            // Read paths from each file
-            for entry in files {
-                if let Ok(content) = fs::read_to_string(entry.path()) {
-                    for line in content.lines() {
-                        let trimmed = line.trim();
-                        // Skip empty lines and comments
-                        if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                            all_paths.push(trimmed.to_string());
-                        }
+        // Read paths from each file
+        for entry in files {
+            if let Ok(content) = fs::read_to_string(entry.path()) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    // Skip empty lines and comments
+                    if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                        all_paths.push(trimmed.to_string());
                     }
                 }
             }
-        }
-        Err(_) => {
-            // If we can't read the directory, output empty string
-            println!();
-            return;
         }
     }
 
