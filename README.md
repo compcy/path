@@ -137,6 +137,27 @@ path remove -f /bin
 
 `path remove` does not modify the store file.
 
+### Emulate macOS `path_helper`
+
+`path helper` reads the files in `/etc/paths.d` (or an alternate directory with
+`--paths-d`) and prints the resulting paths in Apple `path_helper` format.
+By default it prints a raw colon-separated PATH string.
+
+```sh
+path helper
+path helper -c
+path helper -s
+path helper --paths-d /custom/paths.d
+```
+
+The flags control output style:
+
+- `-c` prints `setenv PATH "...";`
+- `-s` prints `PATH="..."; export PATH;`
+
+Note: this command only reads `paths.d` directory entries and does not read
+`/etc/paths` itself.
+
 ## Stored Entries
 
 Named entries are persisted to `~/.path` and reloaded automatically in future
@@ -205,27 +226,6 @@ path load
 
 This runs automatically at shell startup when the wrapper is sourced.
 Unknown option tokens in the store file produce a warning but do not stop loading.
-
-### Emulate macOS `path_helper`
-
-`path helper` reads the files in `/etc/paths.d` (or an alternate directory with
-`--paths-d`) and prints the resulting paths in Apple `path_helper` format.
-By default it prints a raw colon-separated PATH string.
-
-```sh
-path helper
-path helper -c
-path helper -s
-path helper --paths-d /custom/paths.d
-```
-
-The flags control output style:
-
-- `-c` prints `setenv PATH "...";`
-- `-s` prints `PATH="..."; export PATH;`
-
-Note: this command only reads `paths.d` directory entries and does not read
-`/etc/paths` itself.
 
 ### Verify the Store File
 
