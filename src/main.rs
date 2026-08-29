@@ -1094,6 +1094,29 @@ fn build_cli() -> App<'static, 'static> {
             SubCommand::with_name("restore")
                 .about("Restore standard protected system paths into PATH"),
         )
+        .subcommand(
+            SubCommand::with_name("helper")
+                .about("Emulate Apple's path_helper for paths.d directories")
+                .arg(
+                    Arg::with_name("c_format")
+                        .short("c")
+                        .help("Output as C-shell command (setenv PATH \"...\";)")
+                        .takes_value(false),
+                )
+                .arg(
+                    Arg::with_name("s_format")
+                        .short("s")
+                        .help("Output as Bourne-shell command (PATH=\"...\"; export PATH;)")
+                        .takes_value(false),
+                )
+                .arg(
+                    Arg::with_name("paths_d")
+                        .long("paths-d")
+                        .value_name("DIRECTORY")
+                        .help("Path to the paths.d directory (default: /etc/paths.d)")
+                        .takes_value(true),
+                ),
+        )
 }
 
 /// Resolve a user-provided token to a stored location when it matches a name.
@@ -1852,6 +1875,79 @@ fn handle_restore() {
     println!("{}", format_export_path(&current));
 }
 
+// Format the `path helper` output string for C-shell or Bourne-shell consumers.
+fn format_helper_output(path_string: &str, is_c_format: bool, is_s_format: bool) -> String {
+    let shell_name = env::var("SHELL")
+        .ok()
+        .and_then(|shell| {
+            Path::new(&shell)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
+    let default_c_format = matches!(shell_name.as_str(), "csh" | "tcsh");
+    let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
+
+    if is_c_format || (!is_s_format && default_c_format) {
+        format!("setenv PATH \"{}\";", escaped)
+    } else {
+        format!("PATH=\"{}\"; export PATH;", escaped)
+    }
+}
+
+// Handle the `helper` subcommand by reading paths.d files and printing shell output.
+fn handle_helper(matches: &ArgMatches) {
+    let paths_d = matches.value_of("paths_d").unwrap_or("/etc/paths.d");
+
+    let paths_d_path = Path::new(paths_d);
+
+    // Collect all paths from files in paths.d directory, in sorted filename order
+    let mut all_paths = Vec::new();
+
+    // Read all files from the directory if it exists.
+    if let Ok(entries) = fs::read_dir(paths_d_path) {
+        let mut files: Vec<_> = entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                // Only process files, skip directories
+                entry
+                    .file_type()
+                    .ok()
+                    .map(|ft| ft.is_file())
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        // Sort by filename
+        files.sort_by_key(|a| a.file_name());
+
+        // Read paths from each file
+        for entry in files {
+            if let Ok(content) = fs::read_to_string(entry.path()) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    // Skip empty lines and comments
+                    if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                        all_paths.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Determine output format
+    let is_c_format = matches.is_present("c_format");
+    let is_s_format = matches.is_present("s_format");
+
+    let path_string = if all_paths.is_empty() {
+        String::new()
+    } else {
+        all_paths.join(":")
+    };
+
+    println!("{}", format_helper_output(&path_string, is_c_format, is_s_format));
+}
+
 /// Resolve the display name for a PATH segment.
 ///
 /// Checks stored entries first, then the built-in system path table, then
@@ -1965,6 +2061,11 @@ fn main() {
 
     if matches.subcommand_matches("restore").is_some() {
         handle_restore();
+        return;
+    }
+
+    if let Some(helper_matches) = matches.subcommand_matches("helper") {
+        handle_helper(helper_matches);
         return;
     }
 
@@ -2285,6 +2386,24 @@ mod tests {
         assert_eq!(
             format_export_path("/a'quoted:/b"),
             "export PATH='/a'\\''quoted:/b'"
+        );
+    }
+
+    #[test]
+    /// Ensure helper output formatter emits C-shell syntax when explicitly requested.
+    fn format_helper_output_emits_c_shell_syntax_for_c_flag() {
+        assert_eq!(
+            format_helper_output("/usr/bin:/bin", true, false),
+            "setenv PATH \"/usr/bin:/bin\";"
+        );
+    }
+
+    #[test]
+    /// Ensure helper output formatter emits Bourne-shell syntax when explicitly requested.
+    fn format_helper_output_emits_bourne_shell_syntax_for_s_flag() {
+        assert_eq!(
+            format_helper_output("/usr/bin:/bin", false, true),
+            "PATH=\"/usr/bin:/bin\"; export PATH;"
         );
     }
 

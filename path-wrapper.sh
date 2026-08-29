@@ -382,6 +382,14 @@ _path_wrapper_apply_export() {
     export PATH
 }
 
+# Forward path_helper-compatible requests to the resolved CLI binary.
+path_helper() {
+    _path_wrapper_resolve_cli_bin || return 1
+    _path_cli_bin="$_PATH_WRAPPER_ACTIVE_BIN"
+
+    command "$_path_cli_bin" helper "$@"
+}
+
 path() {
     _path_wrapper_resolve_cli_bin || return 1
     _path_cli_bin="$_PATH_WRAPPER_ACTIVE_BIN"

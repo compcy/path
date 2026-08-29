@@ -71,7 +71,7 @@ the wrapper script from your rc file:
 . "$HOME/git/path/path-wrapper.sh"
 ```
 
-Sourcing the wrapper defines a `path` shell function and immediately runs
+Sourcing the wrapper defines `path` and `path_helper` shell functions and immediately runs
 `path load`, applying your stored auto entries on each new terminal session.
 
 If `path` is not yet on PATH when your rc file runs, set `PATH_CLI_BIN` first:
@@ -136,6 +136,27 @@ path remove -f /bin
 ```
 
 `path remove` does not modify the store file.
+
+### Emulate macOS `path_helper`
+
+`path helper` reads the files in `/etc/paths.d` (or an alternate directory with
+`--paths-d`) and prints the resulting paths in Apple `path_helper` format.
+By default it chooses output style from `$SHELL` (C-shell for `csh`/`tcsh`, Bourne-shell otherwise).
+
+```sh
+path helper
+path helper -c
+path helper -s
+path helper --paths-d /custom/paths.d
+```
+
+The flags control output style:
+
+- `-c` prints `setenv PATH "...";`
+- `-s` prints `PATH="..."; export PATH;`
+
+Note: this command only reads `paths.d` directory entries and does not read
+`/etc/paths` itself.
 
 ## Stored Entries
 
@@ -288,17 +309,18 @@ sequences via diagnostic output.
 
 ## Command Reference
 
-| Command                       | Description                                   |
-| ----------------------------- | --------------------------------------------- |
-| `path`                        | Show current PATH as a formatted table        |
-| `path add <dir> [name]`       | Append to PATH; store if name given           |
-| `path add --pre <dir> [name]` | Prepend to PATH; store if name given          |
-| `path remove <dir-or-name>`   | Remove from current PATH only                 |
-| `path delete <dir-or-name>`   | Delete from store file only                   |
-| `path list`                   | Show all stored entries                       |
-| `path load`                   | Apply all auto entries from the store to PATH |
-| `path verify`                 | Validate store file                           |
-| `path restore`                | Restore built-in system paths to PATH         |
+| Command                       | Description                                      |
+| ----------------------------- | ------------------------------------------------ |
+| `path`                        | Show current PATH as a formatted table           |
+| `path add <dir> [name]`       | Append to PATH; store if name given              |
+| `path add --pre <dir> [name]` | Prepend to PATH; store if name given             |
+| `path remove <dir-or-name>`   | Remove from current PATH only                    |
+| `path delete <dir-or-name>`   | Delete from store file only                      |
+| `path list`                   | Show all stored entries                          |
+| `path load`                   | Apply all auto entries from the store to PATH    |
+| `path verify`                 | Validate store file                              |
+| `path helper`                 | Emulate Apple's `path_helper` for `/etc/paths.d` |
+| `path restore`                | Restore built-in system paths to PATH            |
 
 ## CI Checks
 

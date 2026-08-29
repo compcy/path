@@ -239,6 +239,28 @@ test_subcommand_load() {
     pass "subcommand extracts 'load'"
 }
 
+test_shell_function_path_helper_passes_arguments() {
+    tmp_bin=$(mktemp)
+    cat > "$tmp_bin" <<'EOF'
+#!/usr/bin/env sh
+printf '%s\n' "$0" "$@"
+EOF
+    chmod +x "$tmp_bin"
+
+    result=$(sh -c "
+        PATH_CLI_BIN='$tmp_bin'
+        export PATH_CLI_BIN
+        . '$REPO_ROOT/path-wrapper.sh' >/dev/null 2>&1 || true
+        path_helper -c --paths-d /tmp/custom
+    " 2>/dev/null)
+
+    rm -f "$tmp_bin"
+
+    expected=$(printf '%s\n%s\n%s\n%s\n%s' "$tmp_bin" "helper" "-c" "--paths-d" "/tmp/custom")
+    [ "$result" = "$expected" ] || fail "path_helper failed: got '$result'"
+    pass "path_helper forwards arguments to the CLI binary"
+}
+
 # Test _path_wrapper_compute_sha256
 test_compute_sha256_works() {
     tmp_file=$(mktemp)
@@ -394,6 +416,7 @@ test_subcommand_with_equals_option
 test_subcommand_with_double_dash
 test_subcommand_list
 test_subcommand_load
+test_shell_function_path_helper_passes_arguments
 test_compute_sha256_works
 test_compute_sha256_deterministic
 test_compute_sha256_different_content
