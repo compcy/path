@@ -117,7 +117,7 @@ fn standard_system_paths() -> &'static [PathEntry] {
     static SYSTEM_PATHS: OnceLock<Vec<PathEntry>> = OnceLock::new();
     SYSTEM_PATHS
         .get_or_init(|| {
-            vec![
+            let system_paths = vec![
                 builtin_path_entry(
                     "/bin",
                     "sysbin",
@@ -154,7 +154,24 @@ fn standard_system_paths() -> &'static [PathEntry] {
                     PlacementMode::Postfix,
                     ProtectionMode::Protected,
                 ),
-            ]
+            ];
+
+            #[cfg(target_os = "macos")]
+            let system_paths = {
+                let mut system_paths = system_paths;
+                system_paths.insert(
+                    4,
+                    builtin_path_entry(
+                        "/System/Cryptexes/App/usr/bin",
+                        "systemcryptex",
+                        PlacementMode::Postfix,
+                        ProtectionMode::Protected,
+                    ),
+                );
+                system_paths
+            };
+
+            system_paths
         })
         .as_slice()
 }
@@ -220,6 +237,18 @@ fn known_extra_paths() -> &'static [PathEntry] {
                 entries.push(builtin_path_entry(
                     &format!("{}/.local/bin", home_str),
                     "pipx",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Unprotected,
+                ));
+                entries.push(builtin_path_entry(
+                    &format!("{}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/debugCommand", home_str),
+                    "copilotdebug",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Unprotected,
+                ));
+                entries.push(builtin_path_entry(
+                    &format!("{}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli", home_str),
+                    "copilotcli",
                     PlacementMode::Postfix,
                     ProtectionMode::Unprotected,
                 ));
@@ -1327,6 +1356,28 @@ fn format_export_path(path: &str) -> String {
     format!("export PATH='{}'", quote_for_shell_single(path))
 }
 
+// Format helper output for the requested shell mode.
+fn format_helper_output(path_string: &str, is_c_format: bool, is_s_format: bool) -> String {
+    let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
+    let shell_is_csh = std::env::var("SHELL")
+        .ok()
+        .and_then(|shell| {
+            Path::new(&shell)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.ends_with("csh"))
+        })
+        .unwrap_or(false);
+
+    if is_c_format {
+        format!("setenv PATH \"{}\";", escaped)
+    } else if is_s_format || !shell_is_csh {
+        format!("PATH=\"{}\"; export PATH;", escaped)
+    } else {
+        format!("setenv PATH \"{}\";", escaped)
+    }
+}
+
 /// Remove matching path segments from a PATH-like string.
 ///
 /// In addition to the resolved `location`, this may also remove the original
@@ -1875,60 +1926,44 @@ fn handle_restore() {
     println!("{}", format_export_path(&current));
 }
 
-// Format the `path helper` output string for C-shell or Bourne-shell consumers.
-fn format_helper_output(path_string: &str, is_c_format: bool, is_s_format: bool) -> String {
-    let shell_name = env::var("SHELL")
-        .ok()
-        .and_then(|shell| {
-            Path::new(&shell)
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-        })
-        .unwrap_or_default();
-    let default_c_format = matches!(shell_name.as_str(), "csh" | "tcsh");
-    let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
-
-    if is_c_format || (!is_s_format && default_c_format) {
-        format!("setenv PATH \"{}\";", escaped)
-    } else {
-        format!("PATH=\"{}\"; export PATH;", escaped)
-    }
-}
-
-// Handle the `helper` subcommand by reading paths.d files and printing shell output.
+/// Handle the `helper` subcommand.
+///
+/// Reads all files from the specified paths.d directory (or /etc/paths.d by default),
+/// parses each file for path entries (one per line), and outputs them as a
+/// colon-separated string matching Apple's path_helper format.
 fn handle_helper(matches: &ArgMatches) {
     let paths_d = matches.value_of("paths_d").unwrap_or("/etc/paths.d");
 
     let paths_d_path = Path::new(paths_d);
 
-    // Collect all paths from files in paths.d directory, in sorted filename order
+    // Collect all paths from files in paths.d directory, in sorted filename order.
     let mut all_paths = Vec::new();
+    if paths_d_path.is_dir() {
+        if let Ok(entries) = fs::read_dir(paths_d_path) {
+            let mut files: Vec<_> = entries
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| {
+                    // Only process files, skip directories
+                    entry
+                        .file_type()
+                        .ok()
+                        .map(|ft| ft.is_file())
+                        .unwrap_or(false)
+                })
+                .collect();
 
-    // Read all files from the directory if it exists.
-    if let Ok(entries) = fs::read_dir(paths_d_path) {
-        let mut files: Vec<_> = entries
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                // Only process files, skip directories
-                entry
-                    .file_type()
-                    .ok()
-                    .map(|ft| ft.is_file())
-                    .unwrap_or(false)
-            })
-            .collect();
+            // Sort by filename
+            files.sort_by_key(|a| a.file_name());
 
-        // Sort by filename
-        files.sort_by_key(|a| a.file_name());
-
-        // Read paths from each file
-        for entry in files {
-            if let Ok(content) = fs::read_to_string(entry.path()) {
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    // Skip empty lines and comments
-                    if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                        all_paths.push(trimmed.to_string());
+            // Read paths from each file
+            for entry in files {
+                if let Ok(content) = fs::read_to_string(entry.path()) {
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        // Skip empty lines and comments
+                        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                            all_paths.push(trimmed.to_string());
+                        }
                     }
                 }
             }
@@ -1945,7 +1980,10 @@ fn handle_helper(matches: &ArgMatches) {
         all_paths.join(":")
     };
 
-    println!("{}", format_helper_output(&path_string, is_c_format, is_s_format));
+    println!(
+        "{}",
+        format_helper_output(&path_string, is_c_format, is_s_format)
+    );
 }
 
 /// Resolve the display name for a PATH segment.
@@ -2075,6 +2113,21 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    // Restore `SHELL` after env-sensitive tests, even if an assertion panics.
+    struct ShellRestoreGuard(Option<std::ffi::OsString>);
+
+    impl Drop for ShellRestoreGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(shell) => std::env::set_var("SHELL", shell),
+                None => std::env::remove_var("SHELL"),
+            }
+        }
+    }
 
     /// Helper to construct a test entry with sensible defaults.
     fn test_entry(location: &str, name: &str) -> PathEntry {
@@ -2407,6 +2460,32 @@ mod tests {
         );
     }
 
+    /// Ensure helper output formatter defaults to Bourne-shell syntax for non-csh shells.
+    #[test]
+    fn format_helper_output_defaults_to_bourne_shell_syntax_for_non_csh_shells() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original_shell = std::env::var_os("SHELL");
+        let _shell_restore = ShellRestoreGuard(original_shell);
+        std::env::set_var("SHELL", "/bin/zsh");
+        assert_eq!(
+            format_helper_output("/usr/bin:/bin", false, false),
+            "PATH=\"/usr/bin:/bin\"; export PATH;"
+        );
+    }
+
+    /// Ensure helper output formatter defaults to C-shell syntax when `$SHELL` names a C shell.
+    #[test]
+    fn format_helper_output_defaults_to_c_shell_syntax_for_csh_shells() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original_shell = std::env::var_os("SHELL");
+        let _shell_restore = ShellRestoreGuard(original_shell);
+        std::env::set_var("SHELL", "/bin/tcsh");
+        assert_eq!(
+            format_helper_output("/usr/bin:/bin", false, false),
+            "setenv PATH \"/usr/bin:/bin\";"
+        );
+    }
+
     #[test]
     /// Ensure remove logic drops all exact matching segments.
     fn remove_from_path_removes_exact_segments() {
@@ -2461,8 +2540,12 @@ mod tests {
         if let Ok(home) = env::var("HOME") {
             let cargo = format!("{}/.cargo/bin", home);
             let pipx = format!("{}/.local/bin", home);
+            let copilot_debug = format!("{}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/debugCommand", home);
+            let copilot_cli = format!("{}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli", home);
             assert!(locations.contains(&cargo.as_str()));
             assert!(locations.contains(&pipx.as_str()));
+            assert!(locations.contains(&copilot_debug.as_str()));
+            assert!(locations.contains(&copilot_cli.as_str()));
         }
     }
 

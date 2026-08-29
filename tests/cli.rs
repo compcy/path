@@ -1578,7 +1578,11 @@ fn restore_adds_standard_system_paths_to_path() {
 
     assert_eq!(
         out_str.trim(),
-        "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin'"
+        if cfg!(target_os = "macos") {
+            "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/System/Cryptexes/App/usr/bin:/usr/local/bin:/usr/local/sbin'"
+        } else {
+            "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin'"
+        }
     );
 }
 
@@ -1603,7 +1607,11 @@ fn restore_does_not_duplicate_existing_system_paths() {
 
     let mut cmd: assert_cmd::Command = test_cmd(
         dir,
-        "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",
+        if cfg!(target_os = "macos") {
+            "/bin:/sbin:/usr/bin:/usr/sbin:/System/Cryptexes/App/usr/bin:/usr/local/bin:/usr/local/sbin"
+        } else {
+            "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
+        },
     );
     let output = cmd
         .arg("restore")
@@ -1616,7 +1624,11 @@ fn restore_does_not_duplicate_existing_system_paths() {
 
     assert_eq!(
         out_str.trim(),
-        "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin'"
+        if cfg!(target_os = "macos") {
+            "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/System/Cryptexes/App/usr/bin:/usr/local/bin:/usr/local/sbin'"
+        } else {
+            "export PATH='/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin'"
+        }
     );
 }
 
@@ -2568,21 +2580,9 @@ fn setup_paths_d_dir() -> io::Result<(tempfile::TempDir, PathBuf)> {
     Ok((temp, paths_d))
 }
 
-/// setup_paths_d_dir helper should create and return an existing paths.d directory.
+/// Helper subcommand should default to Bourne-shell output for non-csh shells.
 #[test]
-fn setup_paths_d_dir_creates_paths_d_directory() {
-    let (_temp, paths_d) = setup_paths_d_dir().expect("setup should succeed");
-
-    assert!(
-        paths_d.exists() && paths_d.is_dir(),
-        "expected setup_paths_d_dir to create a paths.d directory at {:?}",
-        paths_d
-    );
-}
-
-/// Helper subcommand without flags should default to Bourne-shell output for sh-like shells.
-#[test]
-fn helper_defaults_to_shell_output_for_sh_shells() {
+fn helper_defaults_to_bourne_shell_output_for_non_csh_shells() {
     let (temp, paths_d) = setup_paths_d_dir().unwrap();
 
     // Create paths.d files similar to /etc/paths.d structure
@@ -2599,34 +2599,9 @@ fn helper_defaults_to_shell_output_for_sh_shells() {
     let output = cmd.assert().success().get_output().stdout.clone();
     let stdout = String::from_utf8_lossy(&output);
 
-    // Output should contain all expected paths.
-    assert!(
-        stdout.contains("/usr/local/bin"),
-        "expected /usr/local/bin in output: {}",
-        stdout
-    );
-    assert!(
-        stdout.contains("/usr/bin"),
-        "expected /usr/bin in output: {}",
-        stdout
-    );
-    assert!(
-        stdout.contains(".cargo/bin"),
-        "expected .cargo/bin in output: {}",
-        stdout
-    );
-
-    // Default output should be Bourne-shell format for sh-like shells.
-    let path_str = stdout.trim();
-    assert!(
-        path_str.starts_with("PATH=\""),
-        "default helper output should start with Bourne-shell assignment: {}",
-        path_str
-    );
-    assert!(
-        path_str.contains("\"; export PATH;"),
-        "default helper output should include Bourne-shell export clause: {}",
-        path_str
+    assert_eq!(
+        stdout.trim(),
+        "PATH=\"/usr/local/bin:/usr/bin:/home/user/.cargo/bin\"; export PATH;"
     );
 }
 
@@ -2658,14 +2633,14 @@ fn helper_respects_paths_d_file_order() {
     );
 }
 
-/// Helper subcommand with empty paths.d should output shell-formatted empty PATH.
+/// Helper subcommand with empty paths.d should emit an empty Bourne-shell command by default.
 #[test]
-fn helper_with_empty_paths_d_outputs_shell_formatted_empty_path() {
+fn helper_with_empty_paths_d_outputs_empty_sh_command_by_default() {
     let (temp, paths_d) = setup_paths_d_dir().unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(temp.path())
-        .env("SHELL", "/bin/zsh")
+        .env("SHELL", "/bin/bash")
         .arg("helper")
         .arg("--paths-d")
         .arg(&paths_d);
@@ -2673,54 +2648,68 @@ fn helper_with_empty_paths_d_outputs_shell_formatted_empty_path() {
     let output = cmd.assert().success().get_output().stdout.clone();
     let stdout = String::from_utf8_lossy(&output);
 
-    assert_eq!(
-        stdout.trim(),
-        "PATH=\"\"; export PATH;",
-        "expected Bourne-shell empty PATH output for empty paths.d: {}",
-        stdout.trim()
-    );
+    assert_eq!(stdout.trim(), "PATH=\"\"; export PATH;");
 }
 
-/// Helper subcommand with missing paths.d should keep -c/-s output formats.
+/// Helper subcommand should default to C-shell output when `$SHELL` names a C shell.
 #[test]
-fn helper_with_missing_paths_d_keeps_shell_output_format() {
+fn helper_defaults_to_c_shell_output_for_csh_shells() {
+    let (temp, paths_d) = setup_paths_d_dir().unwrap();
+
+    fs::write(paths_d.join("10-test"), "/usr/local/bin\n/usr/bin\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(temp.path())
+        .env("SHELL", "/bin/tcsh")
+        .arg("helper")
+        .arg("--paths-d")
+        .arg(&paths_d);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+
+    assert_eq!(stdout.trim(), "setenv PATH \"/usr/local/bin:/usr/bin\";");
+}
+
+/// Helper subcommand with -c and a missing paths.d should emit an empty C-shell command.
+#[test]
+fn helper_with_c_option_and_missing_paths_d_outputs_empty_csh_command() {
     let temp = tempdir().unwrap();
     let missing_paths_d = temp.path().join("missing-paths.d");
 
-    let mut c_cmd = cargo::cargo_bin_cmd!("path");
-    c_cmd
-        .current_dir(temp.path())
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(temp.path())
         .arg("helper")
         .arg("-c")
         .arg("--paths-d")
         .arg(&missing_paths_d);
-    let c_output = c_cmd.assert().success().get_output().stdout.clone();
-    let c_stdout = String::from_utf8_lossy(&c_output);
-    assert_eq!(
-        c_stdout.trim(),
-        "setenv PATH \"\";",
-        "expected csh format even when paths.d is missing; got: {}",
-        c_stdout.trim()
-    );
 
-    let mut s_cmd = cargo::cargo_bin_cmd!("path");
-    s_cmd
-        .current_dir(temp.path())
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+
+    assert_eq!(stdout.trim(), "setenv PATH \"\";");
+}
+
+/// Helper subcommand with -s and a missing paths.d should emit an empty Bourne-shell command.
+#[test]
+fn helper_with_s_option_and_missing_paths_d_outputs_empty_sh_command() {
+    let temp = tempdir().unwrap();
+    let missing_paths_d = temp.path().join("missing-paths.d");
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(temp.path())
         .arg("helper")
         .arg("-s")
         .arg("--paths-d")
         .arg(&missing_paths_d);
-    let s_output = s_cmd.assert().success().get_output().stdout.clone();
-    let s_stdout = String::from_utf8_lossy(&s_output);
-    assert_eq!(
-        s_stdout.trim(),
-        "PATH=\"\"; export PATH;",
-        "expected sh format even when paths.d is missing; got: {}",
-        s_stdout.trim()
-    );
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+
+    assert_eq!(stdout.trim(), "PATH=\"\"; export PATH;");
 }
 
-/// Helper subcommand with -c option should output C-shell `setenv` format.
+/// Helper subcommand with -c option should output C-shell setenv format.
 #[test]
 fn helper_with_c_option_outputs_csh_setenv_format() {
     let (temp, paths_d) = setup_paths_d_dir().unwrap();
@@ -2736,27 +2725,12 @@ fn helper_with_c_option_outputs_csh_setenv_format() {
 
     let output = cmd.assert().success().get_output().stdout.clone();
     let stdout = String::from_utf8_lossy(&output);
-
-    // Output should be csh format: setenv PATH "...";
     let trimmed = stdout.trim();
-    assert!(
-        trimmed.starts_with("setenv PATH \""),
-        "expected csh format prefix with -c option; got: {}",
-        trimmed
-    );
-    assert!(
-        trimmed.ends_with("\";"),
-        "expected csh format suffix with -c option; got: {}",
-        trimmed
-    );
-    assert!(
-        trimmed.contains("/usr/local/bin"),
-        "expected /usr/local/bin in output: {}",
-        trimmed
-    );
+
+    assert_eq!(trimmed, "setenv PATH \"/usr/local/bin:/usr/bin\";");
 }
 
-/// Helper subcommand with -s option should output Bourne-shell format.
+/// Helper subcommand with -s option should output shell variable assignment format.
 #[test]
 fn helper_with_s_option_outputs_assignment_format() {
     let (temp, paths_d) = setup_paths_d_dir().unwrap();
@@ -2772,24 +2746,9 @@ fn helper_with_s_option_outputs_assignment_format() {
 
     let output = cmd.assert().success().get_output().stdout.clone();
     let stdout = String::from_utf8_lossy(&output);
-
-    // Output should be sh format: PATH="..."; export PATH;
     let trimmed = stdout.trim();
-    assert!(
-        trimmed.starts_with("PATH=\""),
-        "expected sh format prefix with -s option; got: {}",
-        trimmed
-    );
-    assert!(
-        trimmed.contains("\"; export PATH;"),
-        "expected sh export clause with -s option; got: {}",
-        trimmed
-    );
-    assert!(
-        trimmed.contains("/usr/local/bin"),
-        "expected /usr/local/bin in output: {}",
-        trimmed
-    );
+
+    assert_eq!(trimmed, "PATH=\"/usr/local/bin:/usr/bin\"; export PATH;");
 }
 
 /// On macOS only: compare path helper output with system path_helper for paths.d.
@@ -2824,6 +2783,7 @@ fn helper_output_matches_system_path_helper() {
 
     // Run our path helper command without any options.
     let our_helper_output = Command::new(env!("CARGO_BIN_EXE_path"))
+        .env("SHELL", "/bin/zsh")
         .arg("helper")
         .output()
         .expect("failed to run path helper");
@@ -2836,15 +2796,8 @@ fn helper_output_matches_system_path_helper() {
         } else {
             ""
         }
-    } else if let Some(start) = our_helper_stdout.find("setenv PATH \"") {
-        let after_path = &our_helper_stdout[start + 13..];
-        if let Some(end) = after_path.find('"') {
-            &after_path[..end]
-        } else {
-            ""
-        }
     } else {
-        our_helper_stdout.trim()
+        ""
     };
 
     // Extract just the paths.d portion from the system PATH by looking for
@@ -2941,13 +2894,8 @@ fn helper_supports_system_path_helper_options() {
 
     let our_s_stdout = String::from_utf8_lossy(&our_s_output.stdout);
     assert!(
-        our_s_stdout.trim().starts_with("PATH=\""),
+        our_s_stdout.trim().starts_with("PATH=\"") && our_s_stdout.trim().ends_with("\"; export PATH;"),
         "path helper -s should output sh assignment format; got: {}",
-        our_s_stdout
-    );
-    assert!(
-        our_s_stdout.trim().contains("\"; export PATH;"),
-        "path helper -s should include export clause; got: {}",
         our_s_stdout
     );
 
