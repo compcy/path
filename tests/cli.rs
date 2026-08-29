@@ -2568,6 +2568,18 @@ fn setup_paths_d_dir() -> io::Result<(tempfile::TempDir, PathBuf)> {
     Ok((temp, paths_d))
 }
 
+/// setup_paths_d_dir helper should create and return an existing paths.d directory.
+#[test]
+fn setup_paths_d_dir_creates_paths_d_directory() {
+    let (_temp, paths_d) = setup_paths_d_dir().expect("setup should succeed");
+
+    assert!(
+        paths_d.exists() && paths_d.is_dir(),
+        "expected setup_paths_d_dir to create a paths.d directory at {:?}",
+        paths_d
+    );
+}
+
 /// Helper subcommand should output a colon-separated PATH string from paths.d files.
 #[test]
 fn helper_outputs_colon_separated_paths() {
