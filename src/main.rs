@@ -143,6 +143,12 @@ fn standard_system_paths() -> &'static [PathEntry] {
                     ProtectionMode::Protected,
                 ),
                 builtin_path_entry(
+                    "/System/Cryptexes/App/usr/bin",
+                    "systemcryptex",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Protected,
+                ),
+                builtin_path_entry(
                     "/usr/local/bin",
                     "usrlocalbin",
                     PlacementMode::Postfix,
@@ -220,6 +226,18 @@ fn known_extra_paths() -> &'static [PathEntry] {
                 entries.push(builtin_path_entry(
                     &format!("{}/.local/bin", home_str),
                     "pipx",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Unprotected,
+                ));
+                entries.push(builtin_path_entry(
+                    &format!("{}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/debugCommand", home_str),
+                    "copilotdebug",
+                    PlacementMode::Postfix,
+                    ProtectionMode::Unprotected,
+                ));
+                entries.push(builtin_path_entry(
+                    &format!("{}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli", home_str),
+                    "copilotcli",
                     PlacementMode::Postfix,
                     ProtectionMode::Unprotected,
                 ));
@@ -1100,13 +1118,13 @@ fn build_cli() -> App<'static, 'static> {
                 .arg(
                     Arg::with_name("c_format")
                         .short("c")
-                        .help("Output as C-shell command (setenv PATH \"...\";)")
+                        .help("Output as shell command (export PATH='...')")
                         .takes_value(false),
                 )
                 .arg(
                     Arg::with_name("s_format")
                         .short("s")
-                        .help("Output as Bourne-shell command (PATH=\"...\"; export PATH;)")
+                        .help("Output as shell variable assignment (PATH='...')")
                         .takes_value(false),
                 )
                 .arg(
@@ -1875,27 +1893,11 @@ fn handle_restore() {
     println!("{}", format_export_path(&current));
 }
 
-// Format the `path helper` output string for C-shell or Bourne-shell consumers.
-fn format_helper_output(path_string: &str, is_c_format: bool, is_s_format: bool) -> String {
-    let shell_name = env::var("SHELL")
-        .ok()
-        .and_then(|shell| {
-            Path::new(&shell)
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-        })
-        .unwrap_or_default();
-    let default_c_format = matches!(shell_name.as_str(), "csh" | "tcsh");
-    let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
-
-    if is_c_format || (!is_s_format && default_c_format) {
-        format!("setenv PATH \"{}\";", escaped)
-    } else {
-        format!("PATH=\"{}\"; export PATH;", escaped)
-    }
-}
-
-// Handle the `helper` subcommand by reading paths.d files and printing shell output.
+/// Handle the `helper` subcommand.
+///
+/// Reads all files from the specified paths.d directory (or /etc/paths.d by default),
+/// parses each file for path entries (one per line), and outputs them as a
+/// colon-separated string matching Apple's path_helper format.
 fn handle_helper(matches: &ArgMatches) {
     let paths_d = matches.value_of("paths_d").unwrap_or("/etc/paths.d");
 
@@ -1904,34 +1906,47 @@ fn handle_helper(matches: &ArgMatches) {
     // Collect all paths from files in paths.d directory, in sorted filename order
     let mut all_paths = Vec::new();
 
-    // Read all files from the directory if it exists.
-    if let Ok(entries) = fs::read_dir(paths_d_path) {
-        let mut files: Vec<_> = entries
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                // Only process files, skip directories
-                entry
-                    .file_type()
-                    .ok()
-                    .map(|ft| ft.is_file())
-                    .unwrap_or(false)
-            })
-            .collect();
+    // If the directory doesn't exist, output empty string
+    if !paths_d_path.is_dir() {
+        println!();
+        return;
+    }
 
-        // Sort by filename
-        files.sort_by_key(|a| a.file_name());
+    // Read all files from the directory
+    match fs::read_dir(paths_d_path) {
+        Ok(entries) => {
+            let mut files: Vec<_> = entries
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| {
+                    // Only process files, skip directories
+                    entry
+                        .file_type()
+                        .ok()
+                        .map(|ft| ft.is_file())
+                        .unwrap_or(false)
+                })
+                .collect();
 
-        // Read paths from each file
-        for entry in files {
-            if let Ok(content) = fs::read_to_string(entry.path()) {
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    // Skip empty lines and comments
-                    if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                        all_paths.push(trimmed.to_string());
+            // Sort by filename
+            files.sort_by_key(|a| a.file_name());
+
+            // Read paths from each file
+            for entry in files {
+                if let Ok(content) = fs::read_to_string(entry.path()) {
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        // Skip empty lines and comments
+                        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                            all_paths.push(trimmed.to_string());
+                        }
                     }
                 }
             }
+        }
+        Err(_) => {
+            // If we can't read the directory, output empty string
+            println!();
+            return;
         }
     }
 
@@ -1945,7 +1960,21 @@ fn handle_helper(matches: &ArgMatches) {
         all_paths.join(":")
     };
 
-    println!("{}", format_helper_output(&path_string, is_c_format, is_s_format));
+    // Output based on format flags
+    if is_c_format {
+        // Export format: export PATH='...'
+        println!("{}", format_export_path(&path_string));
+    } else if is_s_format {
+        // Assignment format: PATH='...'
+        if path_string.is_empty() {
+            println!("PATH=''");
+        } else {
+            println!("PATH='{}'", path_string);
+        }
+    } else {
+        // Default: colon-separated string
+        println!("{}", path_string);
+    }
 }
 
 /// Resolve the display name for a PATH segment.
@@ -2390,24 +2419,6 @@ mod tests {
     }
 
     #[test]
-    /// Ensure helper output formatter emits C-shell syntax when explicitly requested.
-    fn format_helper_output_emits_c_shell_syntax_for_c_flag() {
-        assert_eq!(
-            format_helper_output("/usr/bin:/bin", true, false),
-            "setenv PATH \"/usr/bin:/bin\";"
-        );
-    }
-
-    #[test]
-    /// Ensure helper output formatter emits Bourne-shell syntax when explicitly requested.
-    fn format_helper_output_emits_bourne_shell_syntax_for_s_flag() {
-        assert_eq!(
-            format_helper_output("/usr/bin:/bin", false, true),
-            "PATH=\"/usr/bin:/bin\"; export PATH;"
-        );
-    }
-
-    #[test]
     /// Ensure remove logic drops all exact matching segments.
     fn remove_from_path_removes_exact_segments() {
         assert_eq!(remove_from_path("/a:/b:/c", "/b", None), "/a:/c");
@@ -2461,8 +2472,12 @@ mod tests {
         if let Ok(home) = env::var("HOME") {
             let cargo = format!("{}/.cargo/bin", home);
             let pipx = format!("{}/.local/bin", home);
+            let copilot_debug = format!("{}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/debugCommand", home);
+            let copilot_cli = format!("{}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli", home);
             assert!(locations.contains(&cargo.as_str()));
             assert!(locations.contains(&pipx.as_str()));
+            assert!(locations.contains(&copilot_debug.as_str()));
+            assert!(locations.contains(&copilot_cli.as_str()));
         }
     }
 

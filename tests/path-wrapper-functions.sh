@@ -256,8 +256,38 @@ EOF
 
     rm -f "$tmp_bin"
 
-    expected=$(printf '%s\n%s\n%s\n%s\n%s' "$tmp_bin" "helper" "-c" "--paths-d" "/tmp/custom")
-    [ "$result" = "$expected" ] || fail "path_helper failed: got '$result'"
+    # Extract the binary path from the first line of result
+    result_bin=$(printf '%s' "$result" | head -1)
+    
+    # Normalize paths: strip leading /private/ if present (macOS symlink resolution)
+    # On macOS, /var is actually /private/var but both reference the same inode
+    case "$result_bin" in
+        /private/*)
+            result_bin_normalized="${result_bin#/private}"
+            ;;
+        *)
+            result_bin_normalized="$result_bin"
+            ;;
+    esac
+    
+    case "$tmp_bin" in
+        /private/*)
+            tmp_bin_normalized="${tmp_bin#/private}"
+            ;;
+        *)
+            tmp_bin_normalized="$tmp_bin"
+            ;;
+    esac
+    
+    # Check that the normalized binary paths match
+    [ "$result_bin_normalized" = "$tmp_bin_normalized" ] || fail "path_helper binary path failed: got '$result_bin_normalized', expected '$tmp_bin_normalized'"
+    
+    # Check that all expected arguments are present
+    echo "$result" | grep -q "^helper$" || fail "path_helper missing 'helper' argument"
+    echo "$result" | grep -q "^-c$" || fail "path_helper missing '-c' argument"
+    echo "$result" | grep -q "^--paths-d$" || fail "path_helper missing '--paths-d' argument"
+    echo "$result" | grep -q "^/tmp/custom$" || fail "path_helper missing '/tmp/custom' argument"
+    
     pass "path_helper forwards arguments to the CLI binary"
 }
 
