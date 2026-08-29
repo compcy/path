@@ -1875,11 +1875,27 @@ fn handle_restore() {
     println!("{}", format_export_path(&current));
 }
 
-/// Handle the `helper` subcommand.
-///
-/// Reads all files from the specified paths.d directory (or /etc/paths.d by default),
-/// parses each file for path entries (one per line), and outputs them as a
-/// colon-separated string matching Apple's path_helper format.
+// Format the `path helper` output string for C-shell or Bourne-shell consumers.
+fn format_helper_output(path_string: &str, is_c_format: bool, is_s_format: bool) -> String {
+    let shell_name = env::var("SHELL")
+        .ok()
+        .and_then(|shell| {
+            Path::new(&shell)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
+    let default_c_format = matches!(shell_name.as_str(), "csh" | "tcsh");
+    let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
+
+    if is_c_format || (!is_s_format && default_c_format) {
+        format!("setenv PATH \"{}\";", escaped)
+    } else {
+        format!("PATH=\"{}\"; export PATH;", escaped)
+    }
+}
+
+// Handle the `helper` subcommand by reading paths.d files and printing shell output.
 fn handle_helper(matches: &ArgMatches) {
     let paths_d = matches.value_of("paths_d").unwrap_or("/etc/paths.d");
 
@@ -1929,26 +1945,7 @@ fn handle_helper(matches: &ArgMatches) {
         all_paths.join(":")
     };
 
-    let shell_name = env::var("SHELL")
-        .ok()
-        .and_then(|shell| {
-            Path::new(&shell)
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-        })
-        .unwrap_or_default();
-    let default_c_format = matches!(shell_name.as_str(), "csh" | "tcsh");
-
-    // Output based on format flags
-    if is_c_format || (!is_s_format && default_c_format) {
-        // C-shell format: setenv PATH "...";
-        let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
-        println!("setenv PATH \"{}\";", escaped);
-    } else {
-        // Bourne-shell format: PATH="..."; export PATH;
-        let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
-        println!("PATH=\"{}\"; export PATH;", escaped);
-    }
+    println!("{}", format_helper_output(&path_string, is_c_format, is_s_format));
 }
 
 /// Resolve the display name for a PATH segment.
@@ -2389,6 +2386,24 @@ mod tests {
         assert_eq!(
             format_export_path("/a'quoted:/b"),
             "export PATH='/a'\\''quoted:/b'"
+        );
+    }
+
+    #[test]
+    /// Ensure helper output formatter emits C-shell syntax when explicitly requested.
+    fn format_helper_output_emits_c_shell_syntax_for_c_flag() {
+        assert_eq!(
+            format_helper_output("/usr/bin:/bin", true, false),
+            "setenv PATH \"/usr/bin:/bin\";"
+        );
+    }
+
+    #[test]
+    /// Ensure helper output formatter emits Bourne-shell syntax when explicitly requested.
+    fn format_helper_output_emits_bourne_shell_syntax_for_s_flag() {
+        assert_eq!(
+            format_helper_output("/usr/bin:/bin", false, true),
+            "PATH=\"/usr/bin:/bin\"; export PATH;"
         );
     }
 
