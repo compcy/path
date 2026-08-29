@@ -256,7 +256,8 @@ EOF
 
     rm -f "$tmp_bin"
 
-    [ "$result" = "$tmp_bin helper -c --paths-d /tmp/custom" ] || fail "path_helper failed: got '$result'"
+    expected=$(printf '%s\n%s\n%s\n%s\n%s' "$tmp_bin" "helper" "-c" "--paths-d" "/tmp/custom")
+    [ "$result" = "$expected" ] || fail "path_helper failed: got '$result'"
     pass "path_helper forwards arguments to the CLI binary"
 }
 
@@ -415,6 +416,7 @@ test_subcommand_with_equals_option
 test_subcommand_with_double_dash
 test_subcommand_list
 test_subcommand_load
+test_shell_function_path_helper_passes_arguments
 test_compute_sha256_works
 test_compute_sha256_deterministic
 test_compute_sha256_different_content
