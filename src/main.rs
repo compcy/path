@@ -1100,13 +1100,13 @@ fn build_cli() -> App<'static, 'static> {
                 .arg(
                     Arg::with_name("c_format")
                         .short("c")
-                        .help("Output as shell command (export PATH='...')")
+                        .help("Output as C-shell command (setenv PATH \"...\";)")
                         .takes_value(false),
                 )
                 .arg(
                     Arg::with_name("s_format")
                         .short("s")
-                        .help("Output as shell variable assignment (PATH='...')")
+                        .help("Output as Bourne-shell command (PATH=\"...\"; export PATH;)")
                         .takes_value(false),
                 )
                 .arg(
@@ -1944,15 +1944,13 @@ fn handle_helper(matches: &ArgMatches) {
 
     // Output based on format flags
     if is_c_format {
-        // Export format: export PATH='...'
-        println!("{}", format_export_path(&path_string));
+        // C-shell format: setenv PATH "...";
+        let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
+        println!("setenv PATH \"{}\";", escaped);
     } else if is_s_format {
-        // Assignment format: PATH='...'
-        if path_string.is_empty() {
-            println!("PATH=''");
-        } else {
-            println!("PATH='{}'", path_string);
-        }
+        // Bourne-shell format: PATH="..."; export PATH;
+        let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
+        println!("PATH=\"{}\"; export PATH;", escaped);
     } else {
         // Default: colon-separated string
         println!("{}", path_string);

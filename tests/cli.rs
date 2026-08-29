@@ -2674,7 +2674,7 @@ fn helper_with_empty_paths_d_outputs_empty_string() {
     );
 }
 
-/// Helper subcommand with -c option should output shell export format.
+/// Helper subcommand with -c option should output C-shell `setenv` format.
 #[test]
 fn helper_with_c_option_outputs_export_format() {
     let (temp, paths_d) = setup_paths_d_dir().unwrap();
@@ -2691,20 +2691,26 @@ fn helper_with_c_option_outputs_export_format() {
     let output = cmd.assert().success().get_output().stdout.clone();
     let stdout = String::from_utf8_lossy(&output);
 
-    // Output should be export format: export PATH='...'
+    // Output should be csh format: setenv PATH "...";
+    let trimmed = stdout.trim();
     assert!(
-        stdout.contains("export PATH="),
-        "expected export format with -c option; got: {}",
-        stdout
+        trimmed.starts_with("setenv PATH \""),
+        "expected csh format prefix with -c option; got: {}",
+        trimmed
     );
     assert!(
-        stdout.contains("/usr/local/bin"),
+        trimmed.ends_with("\";"),
+        "expected csh format suffix with -c option; got: {}",
+        trimmed
+    );
+    assert!(
+        trimmed.contains("/usr/local/bin"),
         "expected /usr/local/bin in output: {}",
-        stdout
+        trimmed
     );
 }
 
-/// Helper subcommand with -s option should output shell variable assignment format.
+/// Helper subcommand with -s option should output Bourne-shell format.
 #[test]
 fn helper_with_s_option_outputs_assignment_format() {
     let (temp, paths_d) = setup_paths_d_dir().unwrap();
@@ -2721,16 +2727,22 @@ fn helper_with_s_option_outputs_assignment_format() {
     let output = cmd.assert().success().get_output().stdout.clone();
     let stdout = String::from_utf8_lossy(&output);
 
-    // Output should be assignment format: PATH='...'
+    // Output should be sh format: PATH="..."; export PATH;
+    let trimmed = stdout.trim();
     assert!(
-        stdout.starts_with("PATH="),
-        "expected assignment format with -s option; got: {}",
-        stdout
+        trimmed.starts_with("PATH=\""),
+        "expected sh format prefix with -s option; got: {}",
+        trimmed
     );
     assert!(
-        stdout.contains("/usr/local/bin"),
+        trimmed.contains("\"; export PATH;"),
+        "expected sh export clause with -s option; got: {}",
+        trimmed
+    );
+    assert!(
+        trimmed.contains("/usr/local/bin"),
         "expected /usr/local/bin in output: {}",
-        stdout
+        trimmed
     );
 }
 
@@ -2846,8 +2858,8 @@ fn helper_supports_system_path_helper_options() {
 
     let our_c_stdout = String::from_utf8_lossy(&our_c_output.stdout);
     assert!(
-        our_c_stdout.contains("export PATH"),
-        "path helper -c should output export format; got: {}",
+        our_c_stdout.trim().starts_with("setenv PATH \""),
+        "path helper -c should output csh setenv format; got: {}",
         our_c_stdout
     );
 
@@ -2867,8 +2879,13 @@ fn helper_supports_system_path_helper_options() {
 
     let our_s_stdout = String::from_utf8_lossy(&our_s_output.stdout);
     assert!(
-        our_s_stdout.starts_with("PATH="),
-        "path helper -s should output assignment format; got: {}",
+        our_s_stdout.trim().starts_with("PATH=\""),
+        "path helper -s should output sh assignment format; got: {}",
+        our_s_stdout
+    );
+    assert!(
+        our_s_stdout.trim().contains("\"; export PATH;"),
+        "path helper -s should include export clause; got: {}",
         our_s_stdout
     );
 

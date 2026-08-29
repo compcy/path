@@ -221,8 +221,8 @@ path helper --paths-d /custom/paths.d
 
 The flags control output style:
 
-- `-c` prints `export PATH='...'`
-- `-s` prints `PATH='...'`
+- `-c` prints `setenv PATH "...";`
+- `-s` prints `PATH="..."; export PATH;`
 
 Note: this command only reads `paths.d` directory entries and does not read
 `/etc/paths` itself.
