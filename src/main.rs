@@ -1129,13 +1129,13 @@ fn build_cli() -> App<'static, 'static> {
                 .arg(
                     Arg::with_name("c_format")
                         .short("c")
-                        .help("Output as shell command (export PATH='...')")
+                        .help("Output as C-shell command (setenv PATH \"...\";)")
                         .takes_value(false),
                 )
                 .arg(
                     Arg::with_name("s_format")
                         .short("s")
-                        .help("Output as shell variable assignment (PATH='...')")
+                        .help("Output as Bourne-shell command (PATH=\"...\"; export PATH;)")
                         .takes_value(false),
                 )
                 .arg(
@@ -1354,6 +1354,19 @@ fn quote_for_shell_single(s: &str) -> String {
 /// Format a shell export statement for the provided PATH value.
 fn format_export_path(path: &str) -> String {
     format!("export PATH='{}'", quote_for_shell_single(path))
+}
+
+/// Format helper output for the requested shell mode.
+fn format_helper_output(path_string: &str, is_c_format: bool, is_s_format: bool) -> String {
+    let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
+
+    if is_c_format {
+        format!("setenv PATH \"{}\";", escaped)
+    } else if is_s_format {
+        format!("PATH=\"{}\"; export PATH;", escaped)
+    } else {
+        path_string.to_string()
+    }
 }
 
 /// Remove matching path segments from a PATH-like string.
@@ -1973,15 +1986,9 @@ fn handle_helper(matches: &ArgMatches) {
 
     // Output based on format flags
     if is_c_format {
-        // Export format: export PATH='...'
-        println!("{}", format_export_path(&path_string));
+        println!("{}", format_helper_output(&path_string, true, false));
     } else if is_s_format {
-        // Assignment format: PATH='...'
-        if path_string.is_empty() {
-            println!("PATH=''");
-        } else {
-            println!("PATH='{}'", quote_for_shell_single(&path_string));
-        }
+        println!("{}", format_helper_output(&path_string, false, true));
     } else {
         // Default: colon-separated string
         println!("{}", path_string);
@@ -2426,6 +2433,24 @@ mod tests {
         assert_eq!(
             format_export_path("/a'quoted:/b"),
             "export PATH='/a'\\''quoted:/b'"
+        );
+    }
+
+    #[test]
+    /// Ensure helper output formatter emits C-shell syntax when explicitly requested.
+    fn format_helper_output_emits_c_shell_syntax_for_c_flag() {
+        assert_eq!(
+            format_helper_output("/usr/bin:/bin", true, false),
+            "setenv PATH \"/usr/bin:/bin\";"
+        );
+    }
+
+    #[test]
+    /// Ensure helper output formatter emits Bourne-shell syntax when explicitly requested.
+    fn format_helper_output_emits_bourne_shell_syntax_for_s_flag() {
+        assert_eq!(
+            format_helper_output("/usr/bin:/bin", false, true),
+            "PATH=\"/usr/bin:/bin\"; export PATH;"
         );
     }
 
