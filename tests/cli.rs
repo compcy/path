@@ -2580,9 +2580,9 @@ fn setup_paths_d_dir() -> io::Result<(tempfile::TempDir, PathBuf)> {
     Ok((temp, paths_d))
 }
 
-/// Helper subcommand should output a colon-separated PATH string from paths.d files.
+/// Helper subcommand should default to Bourne-shell output for non-csh shells.
 #[test]
-fn helper_outputs_colon_separated_paths() {
+fn helper_defaults_to_bourne_shell_output_for_non_csh_shells() {
     let (temp, paths_d) = setup_paths_d_dir().unwrap();
 
     // Create paths.d files similar to /etc/paths.d structure
@@ -2591,6 +2591,7 @@ fn helper_outputs_colon_separated_paths() {
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(temp.path())
+        .env("SHELL", "/bin/zsh")
         .arg("helper")
         .arg("--paths-d")
         .arg(&paths_d);
@@ -2598,29 +2599,9 @@ fn helper_outputs_colon_separated_paths() {
     let output = cmd.assert().success().get_output().stdout.clone();
     let stdout = String::from_utf8_lossy(&output);
 
-    // Output should be colon-separated paths
-    assert!(
-        stdout.contains("/usr/local/bin"),
-        "expected /usr/local/bin in output: {}",
-        stdout
-    );
-    assert!(
-        stdout.contains("/usr/bin"),
-        "expected /usr/bin in output: {}",
-        stdout
-    );
-    assert!(
-        stdout.contains(".cargo/bin"),
-        "expected .cargo/bin in output: {}",
-        stdout
-    );
-
-    // Paths should be colon-separated
-    let path_str = stdout.trim();
-    assert!(
-        path_str.contains(":"),
-        "paths should be colon-separated: {}",
-        path_str
+    assert_eq!(
+        stdout.trim(),
+        "PATH=\"/usr/local/bin:/usr/bin:/home/user/.cargo/bin\"; export PATH;"
     );
 }
 
@@ -2652,13 +2633,14 @@ fn helper_respects_paths_d_file_order() {
     );
 }
 
-/// Helper subcommand with empty paths.d should output empty string.
+/// Helper subcommand with empty paths.d should emit an empty Bourne-shell command by default.
 #[test]
-fn helper_with_empty_paths_d_outputs_empty_string() {
+fn helper_with_empty_paths_d_outputs_empty_sh_command_by_default() {
     let (temp, paths_d) = setup_paths_d_dir().unwrap();
 
     let mut cmd = cargo::cargo_bin_cmd!("path");
     cmd.current_dir(temp.path())
+        .env("SHELL", "/bin/bash")
         .arg("helper")
         .arg("--paths-d")
         .arg(&paths_d);
@@ -2666,12 +2648,27 @@ fn helper_with_empty_paths_d_outputs_empty_string() {
     let output = cmd.assert().success().get_output().stdout.clone();
     let stdout = String::from_utf8_lossy(&output);
 
-    // Output should be empty or just whitespace
-    assert!(
-        stdout.trim().is_empty(),
-        "expected empty output for empty paths.d: {}",
-        stdout
-    );
+    assert_eq!(stdout.trim(), "PATH=\"\"; export PATH;");
+}
+
+/// Helper subcommand should default to C-shell output when `$SHELL` names a C shell.
+#[test]
+fn helper_defaults_to_c_shell_output_for_csh_shells() {
+    let (temp, paths_d) = setup_paths_d_dir().unwrap();
+
+    fs::write(paths_d.join("10-test"), "/usr/local/bin\n/usr/bin\n").unwrap();
+
+    let mut cmd = cargo::cargo_bin_cmd!("path");
+    cmd.current_dir(temp.path())
+        .env("SHELL", "/bin/tcsh")
+        .arg("helper")
+        .arg("--paths-d")
+        .arg(&paths_d);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+
+    assert_eq!(stdout.trim(), "setenv PATH \"/usr/local/bin:/usr/bin\";");
 }
 
 /// Helper subcommand with -c and a missing paths.d should emit an empty C-shell command.
@@ -2784,14 +2781,24 @@ fn helper_output_matches_system_path_helper() {
         ""
     };
 
-    // Run our path helper command without any options (raw colon-separated output)
+    // Run our path helper command without any options.
     let our_helper_output = Command::new(env!("CARGO_BIN_EXE_path"))
+        .env("SHELL", "/bin/zsh")
         .arg("helper")
         .output()
         .expect("failed to run path helper");
 
     let our_helper_stdout = String::from_utf8_lossy(&our_helper_output.stdout).to_string();
-    let our_path = our_helper_stdout.trim();
+    let our_path = if let Some(start) = our_helper_stdout.find("PATH=\"") {
+        let after_path = &our_helper_stdout[start + 6..];
+        if let Some(end) = after_path.find('"') {
+            &after_path[..end]
+        } else {
+            ""
+        }
+    } else {
+        ""
+    };
 
     // Extract just the paths.d portion from the system PATH by looking for
     // paths that are in /etc/paths.d files

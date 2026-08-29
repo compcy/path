@@ -1359,13 +1359,22 @@ fn format_export_path(path: &str) -> String {
 // Format helper output for the requested shell mode.
 fn format_helper_output(path_string: &str, is_c_format: bool, is_s_format: bool) -> String {
     let escaped = path_string.replace('\\', "\\\\").replace('"', "\\\"");
+    let shell_is_csh = std::env::var("SHELL")
+        .ok()
+        .and_then(|shell| {
+            Path::new(&shell)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.ends_with("csh"))
+        })
+        .unwrap_or(false);
 
     if is_c_format {
         format!("setenv PATH \"{}\";", escaped)
-    } else if is_s_format {
+    } else if is_s_format || !shell_is_csh {
         format!("PATH=\"{}\"; export PATH;", escaped)
     } else {
-        path_string.to_string()
+        format!("setenv PATH \"{}\";", escaped)
     }
 }
 
@@ -2104,6 +2113,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Helper to construct a test entry with sensible defaults.
     fn test_entry(location: &str, name: &str) -> PathEntry {
@@ -2434,6 +2446,38 @@ mod tests {
             format_helper_output("/usr/bin:/bin", false, true),
             "PATH=\"/usr/bin:/bin\"; export PATH;"
         );
+    }
+
+    #[test]
+    /// Ensure helper output formatter defaults to Bourne-shell syntax for non-csh shells.
+    fn format_helper_output_defaults_to_bourne_shell_syntax_for_non_csh_shells() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original_shell = std::env::var_os("SHELL");
+        std::env::set_var("SHELL", "/bin/zsh");
+        assert_eq!(
+            format_helper_output("/usr/bin:/bin", false, false),
+            "PATH=\"/usr/bin:/bin\"; export PATH;"
+        );
+        match original_shell {
+            Some(shell) => std::env::set_var("SHELL", shell),
+            None => std::env::remove_var("SHELL"),
+        }
+    }
+
+    #[test]
+    /// Ensure helper output formatter defaults to C-shell syntax when `$SHELL` names a C shell.
+    fn format_helper_output_defaults_to_c_shell_syntax_for_csh_shells() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original_shell = std::env::var_os("SHELL");
+        std::env::set_var("SHELL", "/bin/tcsh");
+        assert_eq!(
+            format_helper_output("/usr/bin:/bin", false, false),
+            "setenv PATH \"/usr/bin:/bin\";"
+        );
+        match original_shell {
+            Some(shell) => std::env::set_var("SHELL", shell),
+            None => std::env::remove_var("SHELL"),
+        }
     }
 
     #[test]
